@@ -63,3 +63,11 @@ Name: "{userstartup}\Roxy Host"; Filename: "{app}\roxy-host.exe"
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent unchecked
 Filename: "{app}\roxy-host.exe"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; Stop the running roxy-host.exe process before uninstall
+Filename: "taskkill.exe"; Parameters: "/F /IM roxy-host.exe"; Flags: runhidden; RunOnceId: "StopRoxyHost"
+
+[UninstallDelete]
+; Remove the startup icon for roxy-host.exe
+Type: files; Name: "{userstartup}\Roxy Host.lnk"
