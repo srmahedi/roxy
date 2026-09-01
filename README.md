@@ -141,6 +141,11 @@ Roxy includes a Chrome extension that automatically intercepts downloads from Ch
 - **URL Redirection** - Sends download URLs to Roxy for better management
 - **Auto-Focus** - Brings Roxy to the front when new downloads are added
 - **Windows-Specific Integration** - Uses Windows executable paths and process management
+- **Enable/Disable Toggle** - Click the extension icon to enable or disable the extension
+  - When enabled (default): Downloads are intercepted and sent to Roxy
+  - When disabled: Downloads are handled normally by Chrome
+  - Badge shows "off" when the extension is disabled
+  - Useful if Roxy fails to download something and you want Chrome to handle it instead
 
 ## 🏗️ Project Structure
 

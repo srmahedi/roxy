@@ -1,5 +1,30 @@
+function updateBadge(isEnabled) {
+  if (isEnabled) {
+    chrome.action.setBadgeText({ text: '' });
+    chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
+  } else {
+    chrome.action.setBadgeText({ text: 'off' });
+    chrome.action.setBadgeBackgroundColor({ color: '#f44336' });
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log("Roxy Download Manager extension installed");
+  // Set default enabled state
+  chrome.storage.local.get(['extensionEnabled'], (result) => {
+    if (result.extensionEnabled === undefined) {
+      chrome.storage.local.set({ extensionEnabled: true });
+    }
+    updateBadge(result.extensionEnabled !== false);
+  });
+});
+
+// Listen for storage changes to update badge
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'local' && changes.extensionEnabled) {
+    const isEnabled = changes.extensionEnabled.newValue !== false;
+    updateBadge(isEnabled);
+  }
 });
 
 // Function to send URL to Python launcher server
@@ -29,6 +54,13 @@ async function sendUrlToLauncher(url, filename) {
 // Intercept downloads when Chrome's download manager is used
 chrome.downloads.onCreated.addListener(async (downloadItem) => {
   console.log('Download created:', downloadItem.url, 'ID:', downloadItem.id);
+  
+  // Check if extension is enabled
+  const result = await chrome.storage.local.get(['extensionEnabled']);
+  if (result.extensionEnabled === false) {
+    console.log('Extension is disabled, allowing Chrome to handle download');
+    return;
+  }
   
   // Only intercept actual file downloads (not chrome extensions, etc.)
   if (!downloadItem.url.startsWith('http://') && !downloadItem.url.startsWith('https://')) {
