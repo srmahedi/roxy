@@ -73,13 +73,17 @@ class DownloadItem(QObject):
 
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
 
+        # Convert backslashes to forward slashes for curl compatibility
+        curl_save_path = self.save_path.replace("\\", "/")
+
         args = [
             "curl",
             "-L",
-            "-o", self.save_path,
+            "-o", curl_save_path,
             "--silent",
             "--show-error",
             "--fail",
+            "--globoff",  # Disable URL globbing to handle square brackets in URLs
         ]
         if self.speed_limit > 0:
             args.extend(["--limit-rate", f"{self.speed_limit}k"])
@@ -87,6 +91,10 @@ class DownloadItem(QObject):
             args.append("-C")
             args.append("-")
         args.append(self.url)
+
+        print(f"🔍 DEBUG: Starting download with curl command: curl {' '.join(args[1:])}")
+        print(f"🔍 DEBUG: Original save path: {self.save_path}")
+        print(f"🔍 DEBUG: Curl save path: {curl_save_path}")
 
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -97,7 +105,8 @@ class DownloadItem(QObject):
         self.statusChanged.emit(self.status)
         self.last_time = time.time()
         self.last_downloaded = self.downloaded_bytes
-        self.process.start("curl", args[1:])
+        # Pass the full args list to QProcess (first element is the program)
+        self.process.start(args[0], args[1:])
         self._timer.start()
 
     def pause(self):
@@ -168,8 +177,11 @@ class DownloadItem(QObject):
 
     def _on_process_finished(self, exit_code, exit_status):
         self._timer.stop()
+        print(f"🔍 DEBUG: Process finished - Exit code: {exit_code}, Exit status: {exit_status}, Current status: {self.status}")
+        
         if self.status == self.STATUS_PAUSED:
             return
+            
         if exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0:
             if os.path.exists(self.save_path):
                 self.downloaded_bytes = os.path.getsize(self.save_path)
@@ -181,10 +193,12 @@ class DownloadItem(QObject):
             self.status = self.STATUS_COMPLETED
             self.statusChanged.emit(self.status)
             self.progressChanged.emit(self.downloaded_bytes, self.total_bytes, 100, 0, 0)
+            print(f"🔍 DEBUG: Download completed successfully")
         else:
             if self.status != self.STATUS_PAUSED and self.status != self.STATUS_STOPPED:
                 self.status = self.STATUS_ERROR
                 self.error_message = self._read_error()
+                print(f"🔍 DEBUG: Download failed - Error: {self.error_message}")
                 self.statusChanged.emit(self.status)
                 self.progressChanged.emit(self.downloaded_bytes, self.total_bytes, -1, 0, -1)
         self.finished.emit(self)
@@ -199,7 +213,9 @@ class DownloadItem(QObject):
 
     def _read_error(self):
         if self.process:
-            output = bytes(self.process.readAllStandardError()).decode('utf-8', errors='ignore')
+            # Read all output since we're using MergedChannels
+            output = bytes(self.process.readAll()).decode('utf-8', errors='ignore')
+            print(f"🔍 DEBUG: Process output: {output}")
             return output.strip() or "Unknown error"
         return "Unknown error"
 

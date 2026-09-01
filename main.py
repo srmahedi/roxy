@@ -57,6 +57,14 @@ def main():
                 if arg.startswith('--filename='):
                     filename_from_args = arg.split('=', 1)[1]
             
+            # Decode URL-encoded filename
+            if filename_from_args:
+                try:
+                    from urllib.parse import unquote
+                    filename_from_args = unquote(filename_from_args)
+                except Exception:
+                    pass
+            
             if url.startswith('http://') or url.startswith('https://'):
                 single_instance.send_to_running_instance(url, filename_from_args)
                 print(f"Sent URL to running instance: {url}")
@@ -133,6 +141,14 @@ def main():
     for arg in sys.argv:
         if arg.startswith('--filename='):
             filename_from_args = arg.split('=', 1)[1]
+    
+    # Decode URL-encoded filename
+    if filename_from_args:
+        try:
+            from urllib.parse import unquote
+            filename_from_args = unquote(filename_from_args)
+        except Exception:
+            pass
     
     if url_to_download:
         window.add_download_from_api(url_to_download, filename_from_args)
