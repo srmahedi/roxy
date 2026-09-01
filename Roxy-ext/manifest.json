@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Roxy",
+  "version": "1.0",
+  "description": "Roxy Download Manager",
+  "permissions": ["downloads"],
+  "host_permissions": ["http://localhost:12579/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "Roxy Download Manager"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
