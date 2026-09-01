@@ -71,3 +71,5 @@ Filename: "taskkill.exe"; Parameters: "/F /IM roxy-host.exe"; Flags: runhidden; 
 [UninstallDelete]
 ; Remove the startup icon for roxy-host.exe
 Type: files; Name: "{userstartup}\Roxy Host.lnk"
+; Remove the Roxy-ext folder from user documents
+Type: filesandordirs; Name: "{userdocs}\Roxy-ext"
