@@ -100,9 +100,34 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     filename = downloadItem.url.split('/').pop().split('?')[0] || 'download';
   }
   
-  // If still no proper filename, try to get it from URL
+  // If still no proper filename, try to get it from URL with better extraction
   if (!filename || filename === 'download' || filename.length < 3) {
-    filename = downloadItem.url.split('/').pop().split('?')[0] || 'download';
+    // Try to extract from URL parameters
+    const urlParams = new URLSearchParams(downloadItem.url.split('?')[1]);
+    filename = urlParams.get('filename') || urlParams.get('file') || urlParams.get('name');
+    
+    if (!filename) {
+      // Try to get from path segments
+      const pathSegments = downloadItem.url.split('/');
+      for (let i = pathSegments.length - 1; i >= 0; i--) {
+        const segment = pathSegments[i];
+        if (segment && segment.includes('.') && segment.length > 3) {
+          filename = segment.split('?')[0];
+          break;
+        }
+      }
+    }
+    
+    if (!filename || filename.length < 3) {
+      filename = 'download';
+    }
+  }
+  
+  // Decode URL-encoded filename
+  try {
+    filename = decodeURIComponent(filename);
+  } catch (e) {
+    console.log('Error decoding filename:', e);
   }
   
   console.log('Final filename to use:', filename);

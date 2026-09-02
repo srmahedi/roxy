@@ -92,9 +92,9 @@ class DownloadItem(QObject):
             args.append("-")
         args.append(self.url)
 
-        print(f"🔍 DEBUG: Starting download with curl command: curl {' '.join(args[1:])}")
-        print(f"🔍 DEBUG: Original save path: {self.save_path}")
-        print(f"🔍 DEBUG: Curl save path: {curl_save_path}")
+        print(f"DEBUG: Starting download with curl command: curl {' '.join(args[1:])}")
+        print(f"DEBUG: Original save path: {self.save_path}")
+        print(f"DEBUG: Curl save path: {curl_save_path}")
 
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -177,7 +177,7 @@ class DownloadItem(QObject):
 
     def _on_process_finished(self, exit_code, exit_status):
         self._timer.stop()
-        print(f"🔍 DEBUG: Process finished - Exit code: {exit_code}, Exit status: {exit_status}, Current status: {self.status}")
+        print(f"DEBUG: Process finished - Exit code: {exit_code}, Exit status: {exit_status}, Current status: {self.status}")
         
         if self.status == self.STATUS_PAUSED:
             return
@@ -193,12 +193,12 @@ class DownloadItem(QObject):
             self.status = self.STATUS_COMPLETED
             self.statusChanged.emit(self.status)
             self.progressChanged.emit(self.downloaded_bytes, self.total_bytes, 100, 0, 0)
-            print(f"🔍 DEBUG: Download completed successfully")
+            print(f"DEBUG: Download completed successfully")
         else:
             if self.status != self.STATUS_PAUSED and self.status != self.STATUS_STOPPED:
                 self.status = self.STATUS_ERROR
                 self.error_message = self._read_error()
-                print(f"🔍 DEBUG: Download failed - Error: {self.error_message}")
+                print(f"DEBUG: Download failed - Error: {self.error_message}")
                 self.statusChanged.emit(self.status)
                 self.progressChanged.emit(self.downloaded_bytes, self.total_bytes, -1, 0, -1)
         self.finished.emit(self)
@@ -215,7 +215,7 @@ class DownloadItem(QObject):
         if self.process:
             # Read all output since we're using MergedChannels
             output = bytes(self.process.readAll()).decode('utf-8', errors='ignore')
-            print(f"🔍 DEBUG: Process output: {output}")
+            print(f"DEBUG: Process output: {output}")
             return output.strip() or "Unknown error"
         return "Unknown error"
 

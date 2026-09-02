@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QPushButton, QSpinBox, QDialogButtonBox, QMessageBox, QFileDialog
 )
 from utils.constants import DARK_QSS
+from utils.helpers import extract_filename_from_url
 
 
 class AddUrlDialog(QDialog):
@@ -61,7 +62,7 @@ class AddUrlDialog(QDialog):
         url = self.url_edit.text().strip()
         default_name = ""
         if url:
-            default_name = os.path.basename(url.split('?')[0]) or "download"
+            default_name = extract_filename_from_url(url)
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save File As",
@@ -83,7 +84,7 @@ class AddUrlDialog(QDialog):
 
         # If path is just a directory, append filename from URL
         if os.path.isdir(path):
-            filename = os.path.basename(url.split('?')[0])
+            filename = extract_filename_from_url(url)
             if filename:
                 path = os.path.join(path, filename)
             else:

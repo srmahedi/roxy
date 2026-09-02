@@ -51,6 +51,7 @@ Source: "dist\Roxy\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\Roxy\_internal\*"; DestDir: "{app}/_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "dist\roxy-host.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Roxy-ext\*"; DestDir: "{userdocs}\Roxy-ext"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

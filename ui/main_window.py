@@ -2,8 +2,6 @@
 Main Window for Roxy Download Manager
 """
 import os
-import re
-from urllib.parse import unquote
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QStandardPaths, QUrl, QSize
 from PyQt6.QtGui import QAction, QIcon, QDesktopServices
 from PyQt6.QtWidgets import QStyle
@@ -13,7 +11,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QAbstractItemView, QSizePolicy, QDialog
 )
 from utils.constants import DARK_QSS, MAIN_API_PORT, APP_NAME
-from utils.helpers import force_window_to_foreground
+from utils.helpers import force_window_to_foreground, extract_filename_from_url
 from utils.persistence import PersistenceManager
 from utils.file_monitor import DownloadFileMonitor
 from models import DownloadItem, DownloadTableModel, ProgressBarDelegate
@@ -21,12 +19,6 @@ from ui.title_bar import TitleBar
 from ui.custom_table_view import CustomTableView
 from ui.add_url_dialog import AddUrlDialog
 from server import RoxyAPIServer
-
-
-def is_uuid_like(filename: str) -> bool:
-    """Check if a filename looks like a UUID (pattern: 8-4-4-4-12 hex digits)."""
-    uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-    return bool(re.match(uuid_pattern, filename.lower()))
 
 
 class MainWindow(QMainWindow):
@@ -195,9 +187,9 @@ class MainWindow(QMainWindow):
                 import subprocess
                 # Convert path to proper Windows format
                 win_path = os.path.normpath(dl.save_path)
-                print(f"🔍 DEBUG: Opening explorer for file: {win_path}")
+                print(f"DEBUG: Opening explorer for file: {win_path}")
                 result = subprocess.run(['explorer', '/select,', win_path], capture_output=True)
-                print(f"🔍 DEBUG: Explorer command result: {result.returncode}")
+                print(f"DEBUG: Explorer command result: {result.returncode}")
         elif dl.status == DownloadItem.STATUS_DOWNLOADING:
             dl.pause()
         elif dl.status == DownloadItem.STATUS_PAUSED:
@@ -238,8 +230,8 @@ class MainWindow(QMainWindow):
 
     def add_download_from_api(self, url: str, filename: str = None):
         """Add download from API call with default settings."""
-        print(f"🔍 DEBUG: add_download_from_api called with URL: {url}")
-        print(f"🔍 DEBUG: Provided filename: {filename}")
+        print(f"DEBUG: add_download_from_api called with URL: {url}")
+        print(f"DEBUG: Provided filename: {filename}")
         
         # Force window to foreground using Windows API without changing flags
         force_window_to_foreground(int(self.winId()))
@@ -253,30 +245,12 @@ class MainWindow(QMainWindow):
         if not downloads_dir or not os.path.isdir(downloads_dir):
             downloads_dir = os.path.expanduser("~")
         
-        # Use provided filename if available, otherwise simple fallback from URL
-        if filename and filename.strip():
-            print(f"🔍 DEBUG: Using provided filename: {filename}")
-            # Decode URL-encoded filename (e.g., %20 -> space)
-            decoded_filename = unquote(filename)
-            print(f"🔍 DEBUG: Decoded filename: {decoded_filename}")
-            
-            # Check if the filename is a UUID (common when extension can't extract filename)
-            if is_uuid_like(decoded_filename):
-                print(f"🔍 DEBUG: Provided filename is UUID, extracting from URL instead")
-                # Extract filename from URL as fallback
-                url_filename = os.path.basename(url.split('?')[0]) or "download"
-                decoded_filename = unquote(url_filename)
-                print(f"🔍 DEBUG: Extracted filename from URL: {decoded_filename}")
-            
-            save_path = os.path.join(downloads_dir, decoded_filename)
-        else:
-            print(f"🔍 DEBUG: No filename provided, using simple URL fallback")
-            simple_filename = os.path.basename(url.split('?')[0]) or "download"
-            # Also decode filename from URL
-            decoded_filename = unquote(simple_filename)
-            save_path = os.path.join(downloads_dir, decoded_filename)
+        # Use improved filename extraction function
+        extracted_filename = extract_filename_from_url(url, filename)
+        print(f"DEBUG: Extracted filename: {extracted_filename}")
         
-        print(f"🔍 DEBUG: Creating download item with save path: {save_path}")
+        save_path = os.path.join(downloads_dir, extracted_filename)
+        print(f"DEBUG: Creating download item with save path: {save_path}")
         
         dl = DownloadItem(url, save_path, 0, self)
         self.model.add_download(dl)
@@ -286,7 +260,7 @@ class MainWindow(QMainWindow):
         self.file_monitor.register_download_file(dl.save_path, dl.download_id)
         dl.start()
         
-        print(f"🔍 DEBUG: Download started for URL: {url}")
+        print(f"DEBUG: Download started for URL: {url}")
         self.status_bar.showMessage(f"Added download from extension: {os.path.basename(save_path)}", 3000)
 
     def selected_row(self):
