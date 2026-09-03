@@ -59,7 +59,10 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:ProgramOnTheWeb,{#MyAppName}}"; Filename: "{#MyAppURL}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{userstartup}\Roxy Host"; Filename: "{app}\roxy-host.exe"
+
+[Registry]
+; Add roxy-host.exe to Windows startup using registry
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Roxy Host"; ValueData: """{app}\roxy-host.exe"""; Flags: uninsdeletevalue uninsdeletekeyifempty
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent unchecked
@@ -70,7 +73,7 @@ Filename: "{app}\roxy-host.exe"; Flags: nowait postinstall skipifsilent
 Filename: "taskkill.exe"; Parameters: "/F /IM roxy-host.exe"; Flags: runhidden; RunOnceId: "StopRoxyHost"
 
 [UninstallDelete]
-; Remove the startup icon for roxy-host.exe
-Type: files; Name: "{userstartup}\Roxy Host.lnk"
 ; Remove the Roxy-ext folder from user documents
 Type: filesandordirs; Name: "{userdocs}\Roxy-ext"
+; Remove the application directory
+Type: filesandordirs; Name: "{app}"
