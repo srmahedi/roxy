@@ -26,21 +26,6 @@ python main.py
 
 > **⚠️ Platform Requirement**: Roxy is currently Windows-only. Requires Windows 10/11 with Python 3.8+ and curl installed.
 
-## ✨ Features
-
-- **🎨 Modern Dark Theme UI** - Clean, professional interface with custom title bar
-- **📥 Multiple Concurrent Downloads** - Manage multiple downloads simultaneously
-- **⏸️ Pause & Resume** - Pause and resume downloads at any time with curl's resume capability
-- **🚀 Speed Limiting** - Set custom speed limits for individual downloads (in KB/s)
-- **📊 Real-time Progress Tracking** - Progress bars, speed display, ETA, and file size information
-- **🎯 Per-Download Actions** - Individual action buttons for each download (Start/Pause/Resume/Open)
-- **📦 Bulk Operations** - Start all or stop all downloads with a single click
-- **📁 File Management** - Open containing folder for completed downloads
-- **❌ Error Handling** - Comprehensive error reporting and status tracking
-- **🌐 Chrome Extension Integration** - Automatically intercepts Chrome downloads and redirects them to Roxy
-- **🔒 Single Instance** - Prevents multiple Roxy instances from running simultaneously
-- **🎯 Auto-Focus** - Window automatically comes to front when downloads are added from browser
-
 ## 📋 Requirements
 
 - **Windows 10/11** - Roxy is Windows-only
@@ -94,24 +79,6 @@ That's it! Roxy should now launch with its dark-themed interface.
 4. Optionally set a speed limit (0 = unlimited)
 5. Click **OK** to start the download
 
-### Managing Downloads
-
-| Action | How to do it |
-|--------|-------------|
-| **Pause/Resume** | Use the action button in the "Action" column or select a download and use the toolbar buttons |
-| **Remove** | Select a download and click "Remove" to delete it from the list (this also deletes the partial file) |
-| **Start All/Stop All** | Use the toolbar buttons to control all downloads at once |
-| **Open Folder** | For completed downloads, click the folder icon to open the containing directory |
-
-### Download States
-
-- **🔄 Pending** - Download queued but not started
-- **⬇️ Downloading** - Currently in progress
-- **⏸️ Paused** - Temporarily stopped (can be resumed)
-- **✅ Completed** - Successfully finished
-- **❌ Error** - Download failed (check error message)
-- **⏹️ Stopped** - Manually stopped (cannot be resumed)
-
 ## 🌐 Chrome Extension Integration
 
 Roxy includes a Chrome extension that automatically intercepts downloads from Chrome and redirects them to Roxy.
@@ -147,62 +114,7 @@ Roxy includes a Chrome extension that automatically intercepts downloads from Ch
   - Badge shows "off" when the extension is disabled
   - Useful if Roxy fails to download something and you want Chrome to handle it instead
 
-## 🏗️ Project Structure
 
-```
-roxy/
-├── main.py                    # Main application entry point
-├── roxy_launcher.py           # Background server for Chrome extension
-├── icon.ico                   # Application icon
-├── requirements.txt          # Python dependencies
-├── setup.iss                  # Inno Setup installer script
-├── models/                    # Data models
-│   ├── __init__.py
-│   ├── download_item.py       # Individual download management
-│   └── download_table_model.py # Table model for GUI display
-├── ui/                        # User interface components
-│   ├── __init__.py
-│   ├── main_window.py         # Main application window
-│   ├── title_bar.py           # Custom title bar
-│   ├── add_url_dialog.py      # Add URL dialog
-│   └── custom_table_view.py   # Custom table widget
-├── server/                    # Server components
-│   ├── __init__.py
-│   ├── api_server.py          # HTTP API for Chrome extension
-│   └── single_instance.py     # Single instance management
-├── utils/                     # Utility functions
-│   ├── __init__.py
-│   ├── constants.py           # Application constants
-│   ├── helpers.py             # Helper functions
-│   ├── persistence.py         # Data persistence
-│   └── file_monitor.py        # File system monitoring
-└── Roxy-ext/                  # Chrome extension
-    ├── manifest.json          # Extension configuration
-    ├── background.js          # Extension logic
-    └── icons/                 # Extension icons
-```
-
-## 🏛️ Architecture
-
-### Technology Stack
-
-- **PyQt6** - GUI framework with custom widgets and styling
-- **curl CLI** - Robust download handling with resume capability and speed limiting
-- **QProcess** - Managing curl subprocesses asynchronously
-- **Windows API** - Platform-specific window management and taskbar integration
-
-### Key Components
-
-| Component | Description |
-|-----------|-------------|
-| `DownloadItem` | Manages individual downloads using curl subprocess |
-| `DownloadTableModel` | Table model for displaying downloads in the GUI |
-| `MainWindow` | Main application window with toolbar and download table |
-| `TitleBar` | Custom title bar with window controls |
-| `AddUrlDialog` | Dialog for adding new downloads |
-| `RoxyAPIServer` | HTTP server for Chrome extension communication |
-| `SingleInstanceManager` | Prevents multiple application instances |
-| `roxy_launcher.py` | Background server that bridges Chrome extension and Roxy |
 
 ## 🔧 Building Executable
 
@@ -232,15 +144,6 @@ This will create a Windows installer with both the main application and the laun
 ## � Platform Support
 
 **Current Status**: Roxy is **Windows-only**.
-
-The application uses Windows-specific features including:
-- Windows API for window management and taskbar integration
-- Windows executable paths and process management
-- Windows environment variables (LOCALAPPDATA)
-- Windows-specific icon format (.ico)
-- Inno Setup for Windows installer creation
-
-**Future Plans**: Cross-platform support (Linux, macOS) is planned for future releases.
 
 ## �🔍 Troubleshooting
 
@@ -279,39 +182,11 @@ curl --version
 - Check that Roxy's HTTP API server is accessible on main app port
 - Restart both the launcher and Roxy if issues persist
 
-## 🚀 Future Enhancements
-
-Planned features for future versions:
-- [ ] Download scheduling
-- [ ] Download categories
-- [ ] Bandwidth throttling for all downloads
-- [ ] Download queue management
-- [ ] Download history with search
-- [ ] Multi-segment downloading
-- [ ] Proxy support
-- [ ] Support for other browsers (Edge, Firefox)
-- [ ] Cross-platform support (Linux, macOS)
-
 ## ⚙️ Configuration
 
 ### Customizing Launcher Path
 
 The launcher uses a hardcoded path to Roxy.exe. To customize this, edit `roxy_launcher.py` and change the `default_path` variable.
-
-### Application Settings
-
-Application constants can be modified in `utils/constants.py`:
-- Application name and organization
-- Port configurations
-- UI styling (DARK_QSS)
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to:
-- Submit pull requests
-- Open issues for bugs
-- Suggest new features
-- Improve documentation
 
 ## 📄 License
 
