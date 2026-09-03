@@ -76,6 +76,8 @@ class MainWindow(QMainWindow):
         self.stop_all_action.triggered.connect(self.stop_all)
         toolbar.addAction(self.stop_all_action)
 
+        self.action_buttons = {}
+
         self.table = CustomTableView()
         self.model = DownloadTableModel(self)
         self.table.setModel(self.model)
@@ -84,6 +86,10 @@ class MainWindow(QMainWindow):
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
+
+        self.model.rowsInserted.connect(self._refresh_action_buttons)
+        self.model.rowsRemoved.connect(self._refresh_action_buttons)
+        self.model.modelReset.connect(self._refresh_action_buttons)
 
         self.table.setColumnWidth(0, 80)
         self.table.setColumnWidth(1, 250)
@@ -123,7 +129,10 @@ class MainWindow(QMainWindow):
         self._load_saved_downloads()
 
     # ---- Action button management ----
-    def _setup_action_button_for_row(self, row, dl):
+    def _create_action_button_for_item(self, dl):
+        if dl in self.action_buttons:
+            return self.action_buttons[dl]
+        
         btn = QPushButton()
         btn.setFixedWidth(70)
         btn.setStyleSheet("""
@@ -137,14 +146,27 @@ class MainWindow(QMainWindow):
             QPushButton:pressed { background-color: #2a2a2a; }
             QPushButton:disabled { background-color: #2a2a2a; }
         """)
-        self.table.setIndexWidget(self.model.index(row, 0), btn)
         self._update_action_button(btn, dl)
         dl.statusChanged.connect(lambda status, b=btn, d=dl: self._update_action_button(b, d))
         btn.clicked.connect(lambda checked, d=dl: self._on_action_button_clicked(d))
+        self.action_buttons[dl] = btn
+        return btn
+
+    def _refresh_action_buttons(self):
+        """Re-bind index widgets for all rows in table model."""
+        current_dls = set(self.model.downloads)
+        for dl in list(self.action_buttons.keys()):
+            if dl not in current_dls:
+                btn = self.action_buttons.pop(dl)
+                btn.deleteLater()
+
+        for row, dl in enumerate(self.model.downloads):
+            btn = self._create_action_button_for_item(dl)
+            self._update_action_button(btn, dl)
+            self.table.setIndexWidget(self.model.index(row, 0), btn)
 
     def _update_action_button(self, btn, dl):
         """Update button text/icon based on download status."""
-        # Check if button still exists (might have been deleted)
         try:
             if not btn or not hasattr(btn, 'setIcon'):
                 return
@@ -221,11 +243,11 @@ class MainWindow(QMainWindow):
             speed_limit = dialog.speed_limit
             dl = DownloadItem(url, save_path, speed_limit, self)
             self.model.add_download(dl)
-            row = self.model.rowCount() - 1
-            self._setup_action_button_for_row(row, dl)
+            self._refresh_action_buttons()
             # Register with file monitor
             self.file_monitor.register_download_file(dl.save_path, dl.download_id)
             dl.start()
+            self._save_downloads()
             self.status_bar.showMessage(f"Added download: {os.path.basename(save_path)}", 3000)
 
     def add_download_from_api(self, url: str, filename: str = None):
@@ -254,11 +276,11 @@ class MainWindow(QMainWindow):
         
         dl = DownloadItem(url, save_path, 0, self)
         self.model.add_download(dl)
-        row = self.model.rowCount() - 1
-        self._setup_action_button_for_row(row, dl)
+        self._refresh_action_buttons()
         # Register with file monitor
         self.file_monitor.register_download_file(dl.save_path, dl.download_id)
         dl.start()
+        self._save_downloads()
         
         print(f"DEBUG: Download started for URL: {url}")
         self.status_bar.showMessage(f"Added download from extension: {os.path.basename(save_path)}", 3000)
@@ -275,6 +297,7 @@ class MainWindow(QMainWindow):
             dl = self.model.get_download(row)
             if dl:
                 dl.pause()
+                self._save_downloads()
                 self.status_bar.showMessage(f"Paused: {os.path.basename(dl.save_path)}", 3000)
 
     def resume_selected(self):
@@ -283,6 +306,7 @@ class MainWindow(QMainWindow):
             dl = self.model.get_download(row)
             if dl and dl.status != DownloadItem.STATUS_DOWNLOADING:
                 dl.start()
+                self._save_downloads()
                 self.status_bar.showMessage(f"Resumed: {os.path.basename(dl.save_path)}", 3000)
 
     def remove_selected(self):
@@ -290,14 +314,13 @@ class MainWindow(QMainWindow):
         if row >= 0:
             dl = self.model.get_download(row)
             if dl:
-                # Disconnect signals to prevent updates after removal
                 try:
                     dl.statusChanged.disconnect()
                 except:
                     pass
-                # Unregister from file monitor
                 self.file_monitor.unregister_download_file(dl.save_path)
                 self.model.remove_download(row)
+                self._save_downloads()
                 self.status_bar.showMessage("Removed download", 3000)
 
     def start_all(self):
@@ -385,8 +408,6 @@ class MainWindow(QMainWindow):
                 
                 # Add to model
                 self.model.add_download(dl)
-                row = self.model.rowCount() - 1
-                self._setup_action_button_for_row(row, dl)
                 restored_count += 1
                 
                 # Register with file monitor
@@ -398,6 +419,7 @@ class MainWindow(QMainWindow):
                     dl.status = DownloadItem.STATUS_PAUSED
                     dl.statusChanged.emit(dl.status)
                 
+            self._refresh_action_buttons()
             if restored_count > 0:
                 self.status_bar.showMessage(f"Restored {restored_count} downloads", 3000)
                 
@@ -418,6 +440,7 @@ class MainWindow(QMainWindow):
                 # Unregister from file monitor
                 self.file_monitor.unregister_download_file(dl.save_path)
                 self.model.remove_download(i)
+                self._save_downloads()
                 self.status_bar.showMessage("Download removed - file deleted", 3000)
                 break
     
@@ -436,8 +459,10 @@ class MainWindow(QMainWindow):
                 self.file_monitor.unregister_download_file(dl.save_path)
                 dl.save_path = new_path
                 self.file_monitor.register_download_file(dl.save_path, dl.download_id)
-                # Update button state since file location changed
-                if dl.status == DownloadItem.STATUS_COMPLETED:
-                    dl.statusChanged.emit(dl.status)
+                self.model.update_item(dl)
+                btn = self.action_buttons.get(dl)
+                if btn:
+                    self._update_action_button(btn, dl)
+                self._save_downloads()
                 self.status_bar.showMessage("Download file moved", 3000)
                 break

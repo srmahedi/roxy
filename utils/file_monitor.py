@@ -8,6 +8,15 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileDeletedEvent, FileCreatedEvent, FileMovedEvent
 
 
+from PyQt6.QtCore import QObject, pyqtSignal
+
+
+class FileMonitorSignals(QObject):
+    file_deleted = pyqtSignal(str)
+    file_created = pyqtSignal(str)
+    file_moved = pyqtSignal(str, str)
+
+
 class DownloadFileMonitor(FileSystemEventHandler):
     """Monitors download directories for file changes."""
     
@@ -15,9 +24,13 @@ class DownloadFileMonitor(FileSystemEventHandler):
                  on_file_created: Callable[[str], None],
                  on_file_moved: Callable[[str, str], None]):
         super().__init__()
-        self.on_file_deleted = on_file_deleted
-        self.on_file_created = on_file_created
-        self.on_file_moved = on_file_moved
+        self.signals = FileMonitorSignals()
+        if on_file_deleted:
+            self.signals.file_deleted.connect(on_file_deleted)
+        if on_file_created:
+            self.signals.file_created.connect(on_file_created)
+        if on_file_moved:
+            self.signals.file_moved.connect(on_file_moved)
         self.monitored_directories: Set[str] = set()
         self.observer = Observer()
         self.file_to_download_map: Dict[str, str] = {}  # Maps file paths to download IDs
@@ -77,7 +90,7 @@ class DownloadFileMonitor(FileSystemEventHandler):
             if file_path in self.file_to_download_map:
                 download_id = self.file_to_download_map[file_path]
                 print(f"Download file deleted: {file_path} (ID: {download_id})")
-                self.on_file_deleted(download_id)
+                self.signals.file_deleted.emit(download_id)
                 self.unregister_download_file(file_path)
     
     def on_created(self, event):
@@ -85,7 +98,7 @@ class DownloadFileMonitor(FileSystemEventHandler):
         if not event.is_directory:
             file_path = event.src_path
             print(f"File created: {file_path}")
-            self.on_file_created(file_path)
+            self.signals.file_created.emit(file_path)
     
     def on_moved(self, event):
         """Handle file move events."""
@@ -95,7 +108,7 @@ class DownloadFileMonitor(FileSystemEventHandler):
             print(f"File moved from {src_path} to {dest_path}")
             if src_path in self.file_to_download_map:
                 download_id = self.file_to_download_map[src_path]
-                self.on_file_moved(download_id, dest_path)
+                self.signals.file_moved.emit(download_id, dest_path)
                 # Update the mapping
                 del self.file_to_download_map[src_path]
                 self.file_to_download_map[dest_path] = download_id
