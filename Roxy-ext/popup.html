@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 200px;
+      padding: 15px;
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background-color: #1e1e1e;
+      color: #e0e0e0;
+    }
+    h2 {
+      margin: 0 0 15px 0;
+      font-size: 16px;
+      color: #ffffff;
+    }
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .toggle-label {
+      font-size: 14px;
+      color: #b0b0b0;
+    }
+    .toggle-switch {
+      position: relative;
+      width: 50px;
+      height: 26px;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #4a4a4a;
+      transition: .4s;
+      border-radius: 26px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 20px;
+      width: 20px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #e0e0e0;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #4CAF50;
+    }
+    input:checked + .slider:before {
+      transform: translateX(24px);
+    }
+    .status {
+      margin-top: 15px;
+      font-size: 12px;
+      color: #888;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h2>Roxy Download Manager</h2>
+  <div class="toggle-container">
+    <span class="toggle-label">Enable Extension</span>
+    <label class="toggle-switch">
+      <input type="checkbox" id="enableToggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="status" id="status">Loading...</div>
+  <script src="popup.js"></script>
+</body>
+</html>

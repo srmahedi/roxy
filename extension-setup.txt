@@ -1,0 +1,8 @@
+1. open chrome
+2. click on top right corner
+3. go to "Extensions" --> "Manage Extensions"
+4. turn on "Developer mode" from top right corner
+5. go to you User Documents folder
+6. here you will find a folder "Roxy-ext"
+7. drag the folder to you chrome browsers Manage Extensions page
+8. reload the extension

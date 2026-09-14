@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Roxy Download Manager Settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Roxy Download Manager Settings</h1>
+    
+    <div id="roxy_loading" class="loading">Loading settings...</div>
+    
+    <div id="roxy_settings" class="settings-content" style="display: none;">
+      <div class="settings-section">
+        <h2>Download Monitoring</h2>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="pauseCatchingForAllSites">
+            <span>Pause download catching for all sites</span>
+          </label>
+        </div>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="allowBrowserDownload">
+            <span>Allow browser download if Roxy fails</span>
+          </label>
+        </div>
+        
+        <div class="setting-item">
+          <label for="skipSmallerThan">Skip files smaller than (KB):</label>
+          <input type="number" id="skipSmallerThan" min="0" value="1024">
+        </div>
+        
+        <div class="setting-item">
+          <label for="skipExtensions">Skip file extensions (comma separated):</label>
+          <input type="text" id="skipExtensions" placeholder=".jpg,.png,.gif">
+        </div>
+        
+        <div class="setting-item">
+          <label for="catchExtensions">Only catch file extensions (comma separated):</label>
+          <input type="text" id="catchExtensions" placeholder=".zip,.rar,.exe">
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h2>Current Site</h2>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="activeTabInSkipList">
+            <span>Skip downloads from current site</span>
+          </label>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h2>Context Menu</h2>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="menuDlThis">
+            <span>Show "Download with Roxy" option</span>
+          </label>
+        </div>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="menuDlAll">
+            <span>Show "Download all links" option</span>
+          </label>
+        </div>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="menuDlSelected">
+            <span>Show "Download selected links" option</span>
+          </label>
+        </div>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="menuDlPage">
+            <span>Show "Download page" option</span>
+          </label>
+        </div>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="menuDlVideo">
+            <span>Show "Download video" option</span>
+          </label>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h2>Actions</h2>
+        
+        <button id="saveSettings" class="btn btn-primary">Save Settings</button>
+        <button id="resetSettings" class="btn btn-secondary">Reset to Defaults</button>
+      </div>
+    </div>
+    
+    <div id="roxy_update" class="update-message" style="display: none;">
+      <h2>Update Required</h2>
+      <p>Please update Roxy Download Manager to use these settings.</p>
+    </div>
+  </div>
+  
+  <script src="settings.js"></script>
+</body>
+</html>

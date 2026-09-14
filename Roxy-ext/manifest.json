@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "Roxy",
+  "version": "1.0",
+  "description": "Roxy Download Manager",
+  "permissions": [
+    "downloads", 
+    "storage", 
+    "webRequest", 
+    "cookies", 
+    "contextMenus", 
+    "activeTab", 
+    "scripting",
+    "tabs",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://localhost:12580/*",
+    "http://localhost:12579/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "all_frames": true,
+      "js": ["content.js"],
+      "matches": ["*://*/*"],
+      "run_at": "document_start"
+    },
+    {
+      "all_frames": true,
+      "js": ["youtube-utils.js"],
+      "matches": ["*://*/*"],
+      "run_at": "document_start"
+    },
+    {
+      "all_frames": true,
+      "js": ["context-menu-helper.js"],
+      "matches": ["*://*/*"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "Roxy Download Manager",
+    "default_popup": "popup.html"
+  },
+  "options_page": "settings.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
