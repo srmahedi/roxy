@@ -74,7 +74,6 @@ roxy/
 ├── utils/
 │   ├── download_engine.py      # Multi-threaded chunk download engine
 │   ├── hls_engine.py           # HLS M3U8 stream parser & segment stitcher
-│   ├── gdrive_resolver.py     # Google Drive download link resolver
 │   ├── file_monitor.py         # Watchdog real-time file monitor
 │   ├── persistence.py          # JSON download state persistence
 │   └── helpers.py              # Path, filename, and unique path helpers

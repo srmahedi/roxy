@@ -245,34 +245,6 @@ class DownloadEngine:
         self.current_mirror_index = 0
         self.stop_event.clear()
 
-        # Check and resolve Google Drive URLs
-        try:
-            from utils.gdrive_resolver import is_google_drive_url, resolve_gdrive_download
-            if is_google_drive_url(self.url):
-                if not self.session:
-                    self.session = self.create_session()
-                cookies = self.headers.get('Cookie')
-                referrer = self.headers.get('Referer')
-                resolved_url, g_filename, g_size, g_error = resolve_gdrive_download(
-                    self.url, session=self.session, cookies=cookies, referrer=referrer, timeout=self.timeout
-                )
-                if g_error:
-                    self._emit_event('error', {'message': g_error})
-                    return False
-                if resolved_url:
-                    self.url = resolved_url
-                if g_size and g_size > 0:
-                    self.file_size = g_size
-                if g_filename:
-                    cur_base = os.path.basename(self.output_file) if self.output_file else ""
-                    cur_ext = os.path.splitext(cur_base)[1]
-                    if not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view', 'preview'):
-                        dir_name = os.path.dirname(self.output_file) if self.output_file else ""
-                        self.output_file = os.path.join(dir_name, g_filename) if dir_name else g_filename
-                        self.temp_file = f"{self.output_file}.temp"
-        except Exception as e:
-            print(f"DEBUG: Error resolving Google Drive URL: {e}")
-
         # Query file information (ignore return status, continue even if server blocks HEAD/GET)
         self.query_file_info()
         
@@ -438,11 +410,7 @@ class DownloadEngine:
                     except Exception:
                         sample = ""
                     err_msg = "Server returned an HTML page instead of the requested file"
-                    if "Download quota exceeded" in sample or ("quota" in sample.lower() and "exceeded" in sample.lower()):
-                        err_msg = "Google Drive error: Download quota exceeded for this file. Try again later."
-                    elif "You need access" in sample or "Sign in to continue" in sample or "accounts.google.com" in response.url:
-                        err_msg = "Google Drive error: Authentication or permission required."
-                    elif "404" in sample or "not found" in sample.lower():
+                    if "404" in sample or "not found" in sample.lower():
                         err_msg = "File not found (404)."
 
                     with self.lock:

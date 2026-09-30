@@ -130,7 +130,7 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
         url: The URL to extract filename from
         provided_filename: Optional filename provided by Chrome extension or other source
         cookies: Optional Cookie header string (e.g. from the browser extension) used
-                 when probing authenticated URLs such as Google Drive.
+                 when probing authenticated URLs.
         referrer: Optional Referer header string.
         
     Returns:
@@ -154,16 +154,6 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
         if not is_uuid and not is_generic and ext:
             return clean_provided
 
-    # Check if this is a Google Drive URL and resolve filename via gdrive_resolver
-    try:
-        from utils.gdrive_resolver import is_google_drive_url, resolve_gdrive_download
-        if is_google_drive_url(url):
-            _, g_name, _, _ = resolve_gdrive_download(url, cookies=cookies, referrer=referrer, timeout=10)
-            if g_name and len(g_name) > 3:
-                return sanitize_filename(g_name)
-    except Exception as e:
-        print(f"DEBUG: Error resolving Google Drive filename: {e}")
-    
     # Build request headers, including optional auth cookies / referrer
     probe_headers = {'User-Agent': USER_AGENT}
     if cookies:

@@ -254,36 +254,15 @@ class MainWindow(QMainWindow):
         existing_path_row = -1
         existing_url_row = -1
         for row, dl in enumerate(self.model.downloads):
-            # For normal downloads, consider any non-ERROR state as potential duplicate
-            # For Google Drive, be more lenient
-            is_gdrive = 'drive.google.com' in url or 'drive.usercontent.google.com' in url or 'takeout-download-drive.usercontent.google.com' in url
-
-            if is_gdrive:
-                # For Google Drive, only consider COMPLETED downloads as duplicates
-                if dl.status == DownloadItem.STATUS_COMPLETED:
-                    if os.path.normpath(dl.save_path).lower() == norm_path:
-                        existing_path_row = row
-                    if dl.url == url:
-                        existing_url_row = row
-            else:
-                # For normal downloads, consider any active download (not ERROR) as duplicate
-                if dl.status != DownloadItem.STATUS_ERROR:
-                    if os.path.normpath(dl.save_path).lower() == norm_path:
-                        existing_path_row = row
-                    if dl.url == url:
-                        existing_url_row = row
+            # For normal downloads, consider any active download (not ERROR) as duplicate
+            if dl.status != DownloadItem.STATUS_ERROR:
+                if os.path.normpath(dl.save_path).lower() == norm_path:
+                    existing_path_row = row
+                if dl.url == url:
+                    existing_url_row = row
 
         is_url_dup = existing_url_row >= 0
         is_table_path_dup = existing_path_row >= 0
-
-        # For Google Drive URLs, be even more lenient - only trigger if file actually exists
-        if 'drive.google.com' in url or 'drive.usercontent.google.com' in url or 'takeout-download-drive.usercontent.google.com' in url:
-            # Only consider duplicate if file actually exists on disk
-            if not is_file_dup:
-                return save_path
-            # If file exists but download is not completed, allow download
-            if is_file_dup and not is_table_path_dup:
-                return save_path
 
         # If no duplicate detected at all, return original save_path
         if not (is_file_dup or is_url_dup or is_table_path_dup):
@@ -383,7 +362,7 @@ class MainWindow(QMainWindow):
         probe_cookies = additional_info.get('cookies', '') if additional_info else ''
         probe_referrer = additional_info.get('referrer', '') if additional_info else ''
 
-        # Use improved filename extraction function (pass auth headers for services like GDrive)
+        # Use improved filename extraction function (pass auth headers)
         extracted_filename = extract_filename_from_url(
             url, filename,
             cookies=probe_cookies or None,
