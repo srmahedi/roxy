@@ -36,6 +36,11 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
                 data = json.loads(post_data.decode('utf-8'))
                 url = data.get('url')
                 filename = data.get('filename')
+                referrer = data.get('referrer', '')
+                cookies = data.get('cookies', '')
+                userAgent = data.get('userAgent', '')
+                postData = data.get('postData', '')
+                documentUrl = data.get('documentUrl', '')
                 
                 if url:
                     print(f"Received download URL: {url}")
@@ -44,8 +49,16 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
                     if filename:
                         print(f"Received filename: {filename}")
                     
-                    # Open Roxy.exe with the URL and filename
-                    self.open_roxy_with_url(url, filename)
+                    # Open Roxy.exe with full download payload parameters
+                    self.open_roxy_with_url(
+                        url,
+                        filename,
+                        referrer,
+                        cookies,
+                        userAgent,
+                        postData,
+                        documentUrl
+                    )
                     
                     # Send success response
                     self.send_response(200)
@@ -113,105 +126,100 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
                 time.sleep(delay)
         return False
     
-    def send_url_to_roxy(self, url, filename=None, retries=3, delay=0.5):
-        """Send URL to existing Roxy instance via HTTP API with retry logic"""
-        for i in range(retries):
-            try:
-                payload = {'url': url}
-                if filename:
-                    payload['filename'] = filename
-                
+    def open_roxy_with_url(
+        self,
+        url,
+        filename=None,
+        referrer='',
+        cookies='',
+        userAgent='',
+        postData='',
+        documentUrl=''
+    ):
+        """Open Roxy.exe and send full download payload to HTTP API"""
+        try:
+            print("=" * 50)
+            print(f"Processing download URL: {url}")
+            print("=" * 50)
+
+            payload = {
+                'url': url,
+                'filename': filename or '',
+                'referrer': referrer,
+                'cookies': cookies,
+                'userAgent': userAgent,
+                'postData': postData,
+                'documentUrl': documentUrl
+            }
+
+            if self.is_roxy_instance_running_with_retry(retries=2, delay=0.5):
+                print("Roxy is running - sending full download information")
                 data = json.dumps(payload).encode('utf-8')
+
                 req = urllib.request.Request(
                     'http://localhost:12580/api/download',
                     data=data,
                     headers={'Content-Type': 'application/json'},
                     method='POST'
                 )
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    if response.status == 200:
-                        print(f"✓ URL sent to Roxy instance successfully (attempt {i+1})")
-                        return True
-                    else:
-                        print(f"✗ Roxy API returned status {response.status} (attempt {i+1})")
-            except Exception as e:
-                print(f"✗ HTTP API method failed (attempt {i+1}): {e}")
-            
-            if i < retries - 1:
-                print(f"Retrying in {delay}s...")
-                time.sleep(delay)
-        
-        print(f"✗ All {retries} attempts failed to send URL to Roxy")
-        return False
-    
-    def open_roxy_with_url(self, url, filename=None):
-        """Open Roxy.exe with the given URL and optional filename"""
-        try:
-            print("=" * 50)
-            print(f"Processing download URL: {url}")
-            if filename:
-                print(f"Filename: {filename}")
-            print("=" * 50)
-            
-            # STRICT CHECK: Only communicate if Roxy is running with retry logic
-            roxy_is_running = self.is_roxy_instance_running_with_retry(retries=2, delay=0.5)
-            
-            if roxy_is_running:
-                # Roxy IS running - ONLY communicate via HTTP API, NEVER launch
-                print("✓ Roxy is running - sending URL to existing instance via HTTP API")
-                if self.send_url_to_roxy(url, filename, retries=3, delay=0.3):
-                    print("✓ SUCCESS: URL sent to existing Roxy instance via HTTP API")
-                    return
-                else:
-                    print("✗ FAILED: Could not communicate with running Roxy instance")
-                    print("  Roxy is running but HTTP API communication failed")
-                    print("  NOT launching new instance to avoid conflicts")
-                    return
+
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    print(f"Roxy response: {response.status}")
+                return
+
+            # Roxy isn't running.
+            # Start it WITHOUT passing the download URL.
+            default_path = os.path.join(
+                os.environ.get("LOCALAPPDATA", ""),
+                "Programs",
+                "Roxy",
+                "Roxy.exe"
+            )
+
+            executable_path = None
+            if os.path.exists(default_path):
+                executable_path = default_path
             else:
-                # Roxy is NOT running - launch new instance
-                print("✗ Roxy is NOT running - launching new instance")
-                
-                # Try dynamic path based on current user's home directory
-                default_path = os.path.join(os.environ["LOCALAPPDATA"], "Programs", "Roxy", "Roxy.exe")
-                
-                try:
-                    # Pass URL and filename as command line arguments
-                    args = [default_path, url]
-                    if filename:
-                        args.append(f"--filename={filename}")
-                    subprocess.Popen(args, shell=True)
-                    print(f"✓ Launched Roxy.exe from: {default_path}")
-                    print(f"✓ URL passed as argument: {url}")
-                    if filename:
-                        print(f"✓ Filename passed as argument: {filename}")
-                    
-                    # Give Roxy a moment to start
-                    time.sleep(2)
-                    return
-                except FileNotFoundError:
-                    print(f"✗ Roxy.exe not found at: {default_path}")
-                    
-                    # If not in default location, try PATH
-                    try:
-                        args = ['Roxy.exe', url]
-                        if filename:
-                            args.append(f"--filename={filename}")
-                        subprocess.Popen(args, shell=True)
-                        print("✓ Launched Roxy.exe from PATH")
-                        print(f"✓ URL passed as argument: {url}")
-                        if filename:
-                            print(f"✓ Filename passed as argument: {filename}")
-                        time.sleep(2)
-                        return
-                    except FileNotFoundError:
-                        print("✗ Roxy.exe not found in PATH")
-                        print("ERROR: Roxy.exe not found. Please ensure it exists at:")
-                        print(f"  {default_path}")
-                        print("Or add Roxy.exe to your system PATH")
-                        return
-            
+                alt_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "Roxy.exe")
+                if os.path.exists(alt_path):
+                    executable_path = alt_path
+
+            if not executable_path:
+                print(f"Roxy.exe not found at: {default_path}")
+                return
+
+            subprocess.Popen(
+                [executable_path],
+                shell=False,
+                cwd=os.path.dirname(executable_path)
+            )
+
+            print(f"Roxy.exe launched from: {executable_path}")
+
+            # Wait for API server
+            for _ in range(20):
+                time.sleep(0.5)
+                if self.is_roxy_instance_running():
+                    break
+            else:
+                print("Roxy API did not become available.")
+                return
+
+            # Send the COMPLETE request after Roxy is running.
+            data = json.dumps(payload).encode('utf-8')
+
+            req = urllib.request.Request(
+                'http://localhost:12580/api/download',
+                data=data,
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+
+            with urllib.request.urlopen(req, timeout=10) as response:
+                print(f"Download sent to Roxy: {response.status}")
+
         except Exception as e:
-            print(f"✗ ERROR in open_roxy_with_url: {e}")
+            print(f"ERROR in open_roxy_with_url: {e}")
     
     def log_message(self, format, *args):
         # Suppress default logging

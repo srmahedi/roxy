@@ -31,7 +31,6 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-LicenseFile=LICENSE
 InfoAfterFile=extension-setup.txt
 ; Remove the following line to run in administrative install mode (install for all users).
 PrivilegesRequired=lowest

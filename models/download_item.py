@@ -60,6 +60,8 @@ class DownloadItem(QObject):
             self.download_engine = HLSEngine()
         else:
             self.download_engine = DownloadEngine()
+            if url and ('googleusercontent.com' in url.lower() or 'drive.google.com' in url.lower()):
+                self.download_engine.fallback_to_single_thread = True
 
         self.download_engine.set_event_callback(self._on_download_event)
         self.download_engine.set_progress_callback(self._on_download_progress)
@@ -133,8 +135,9 @@ class DownloadItem(QObject):
             print(f"Download URL: {self.url}")
             print(f"Save path: {self.save_path}")
             
-            # Check if this is a fallback request (multi-threaded download failed)
-            if 'single-threaded mode' in self.error_message and self.retry_count < self.max_retries:
+            # Check if this is a fallback request (multi-threaded download failed or range error)
+            is_fallback_already = getattr(self.download_engine, 'fallback_to_single_thread', False)
+            if not is_fallback_already and self.retry_count < self.max_retries:
                 print(f"Retrying download in single-threaded mode...")
                 self.retry_count += 1
                 self.status = self.STATUS_PAUSED

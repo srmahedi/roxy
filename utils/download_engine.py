@@ -267,6 +267,10 @@ class DownloadEngine:
         """Create download sections based on file size and configuration"""
         self.sections.clear()
         
+        # Auto-detect Google Drive URLs (which do not support multi-threaded Range requests)
+        if self.url and ('googleusercontent.com' in self.url.lower() or 'drive.google.com' in self.url.lower()):
+            self.fallback_to_single_thread = True
+
         # If fallback is enabled, size is unknown, or resume is not supported, create a single section
         if self.fallback_to_single_thread or self.file_size <= 0 or not self.resume_supported:
             end_pos = self.file_size - 1 if self.file_size > 0 else -1

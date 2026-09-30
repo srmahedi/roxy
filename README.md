@@ -90,10 +90,10 @@ roxy/
 ### PyInstaller Build
 ```bash
 # Build main application executable
-pyinstaller --noconfirm --windowed --name Roxy --icon icon.ico main.py
+pyinstaller --clean --noconfirm --windowed --name Roxy --icon icon.ico main.py
 
 # Build companion launcher host (optional)
-pyinstaller --noconfirm --windowed --onefile --name roxy-host --icon icon.ico roxy_host.py
+pyinstaller --clean --noconfirm --windowed --onefile --name roxy-host --icon icon.ico roxy_host.py
 ```
 
 ### Inno Setup Installer
