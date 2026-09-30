@@ -4,12 +4,12 @@
   "version": "1.0",
   "description": "Roxy Download Manager",
   "permissions": [
-    "downloads", 
-    "storage", 
-    "webRequest", 
-    "cookies", 
-    "contextMenus", 
-    "activeTab", 
+    "downloads",
+    "storage",
+    "webRequest",
+    "cookies",
+    "contextMenus",
+    "activeTab",
     "scripting",
     "tabs",
     "alarms"

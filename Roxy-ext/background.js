@@ -369,7 +369,8 @@ RoxyHttpManager.prototype.performRequest = async function(task, callback)
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(body)
+                    body: JSON.stringify(body),
+                    credentials: 'include'
                 });
                 if (r && r.ok) {
                     response = r;
@@ -893,23 +894,36 @@ DownloadsInterceptManager.prototype.continueDeterminingFilename = function(
         return;
     }
 
-    browser.downloads.cancel(downloadItem.id, function() {
-        browser.downloads.erase({ id: downloadItem.id })
-    });
+    const targetUrl = detailsBetter ? details.url : (downloadItem.finalUrl || downloadItem.url);
 
-    let info = new DownloadInfo(
-        detailsBetter ? details.url : downloadItem.url,
-        detailsBetter ? details.url : downloadItem.finalUrl,
-        downloadItem.referrer,
-        details ? details.postData : "",
-        details ? details.documentUrl : "");
+    // Extract session cookies for the target URL (like the working downloader)
+    let cookieHeader = "";
+    browser.cookies.getAll({ url: targetUrl }, function(cookies) {
+        if (cookies && cookies.length > 0) {
+            cookieHeader = cookies.map(function(c) { return c.name + "=" + c.value; }).join("; ");
+        }
 
-    // Always capture Chrome's resolved filename (from Content-Disposition or URL).
-    // Chrome's downloadItem.filename is already the best available name at this point.
-    if (downloadItem.filename)
-        info.suggestedName = downloadItem.filename;
+        browser.downloads.cancel(downloadItem.id, function() {
+            browser.downloads.erase({ id: downloadItem.id })
+        });
 
-    this.onDownloadIntercepted(info);
+        let info = new DownloadInfo(
+            detailsBetter ? details.url : downloadItem.url,
+            detailsBetter ? details.url : downloadItem.finalUrl,
+            downloadItem.referrer,
+            details ? details.postData : "",
+            details ? details.documentUrl : "");
+
+        // Always capture Chrome's resolved filename (from Content-Disposition or URL).
+        // Chrome's downloadItem.filename is already the best available name at this point.
+        if (downloadItem.filename)
+            info.suggestedName = downloadItem.filename;
+
+        // Set the extracted cookies
+        info.httpCookies = cookieHeader;
+
+        this.onDownloadIntercepted(info);
+    }.bind(this));
 };
 
 DownloadsInterceptManager.prototype.onDownloadIntercepted = function(

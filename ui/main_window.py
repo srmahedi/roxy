@@ -84,6 +84,10 @@ class MainWindow(QMainWindow):
         self.download_queue = []  # Queue of pending downloads
         self.active_downloads = 0  # Count of currently active downloads
 
+        # Google Drive multi-part zip sequential queue
+        self.google_drive_queue = []  # Separate queue for Google Drive multi-part zips
+        self.google_drive_downloading = False  # Flag to prevent concurrent Google Drive downloads
+
         self.table = CustomTableView()
         self.model = DownloadTableModel(self)
         self.table.setModel(self.model)
@@ -338,26 +342,26 @@ class MainWindow(QMainWindow):
         """Add download from API call with additional parameters."""
         print(f"DEBUG: add_download_from_api called with URL: {url}")
         print(f"DEBUG: Provided filename: {filename}")
-        
+
         # Check for pending download info from API server
         if additional_info is None and hasattr(self, '_pending_download_info'):
             additional_info = self._pending_download_info
             delattr(self, '_pending_download_info')
-        
+
         print(f"DEBUG: Additional info: {additional_info}")
-        
+
         # Force window to foreground using Windows API without changing flags
         force_window_to_foreground(int(self.winId()))
-        
+
         # Use Qt methods to bring to front
         self.show()
         self.raise_()
         self.activateWindow()
-        
+
         downloads_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
         if not downloads_dir or not os.path.isdir(downloads_dir):
             downloads_dir = os.path.expanduser("~")
-        
+
         # Pull cookies/referrer early so the filename probe can authenticate
         probe_cookies = additional_info.get('cookies', '') if additional_info else ''
         probe_referrer = additional_info.get('referrer', '') if additional_info else ''
@@ -369,18 +373,23 @@ class MainWindow(QMainWindow):
             referrer=probe_referrer or None,
         )
         print(f"DEBUG: Extracted filename: {extracted_filename}")
-        
+
         save_path = os.path.join(downloads_dir, extracted_filename)
-        
+
         resolved_path = self._check_and_resolve_duplicate(url, save_path)
         if not resolved_path:
             self.status_bar.showMessage("Extension download cancelled (duplicate skipped)", 3000)
             return
 
         print(f"DEBUG: Creating download item with save path: {resolved_path}")
-        
+
         dl = DownloadItem(url, resolved_path, 0, self)
-        
+
+        # Force single-threaded mode for Google Drive to prevent blocking
+        if 'googleusercontent.com' in url.lower() or 'drive.google.com' in url.lower():
+            dl.download_engine.fallback_to_single_thread = True
+            print(f"DEBUG: Forced single-threaded mode for Google Drive download")
+
         # Add additional information if provided
         if additional_info:
             if additional_info.get('referrer'):
@@ -402,13 +411,50 @@ class MainWindow(QMainWindow):
         # Register with file monitor
         self.file_monitor.register_download_file(dl.save_path, dl.download_id)
 
-        # Add to queue and start if under limit
-        self.download_queue.append(dl)
-        self._process_download_queue()
+        # Check if this is a Google Drive multi-part zip and start immediately
+        if self._is_google_drive_multi_part(url):
+            print(f"DEBUG: Google Drive multi-part detected, starting immediately with staggered delay")
+            # Start immediately with staggered delay based on queue position
+            # This prevents token expiration while maintaining order
+            from PyQt6.QtCore import QTimer
+            queue_position = len(self.google_drive_queue)
+            delay = queue_position * 1500  # 1.5 seconds per item to prevent rate limiting
+            self.google_drive_queue.append(dl)
+            QTimer.singleShot(delay, lambda: self._start_google_drive_download(dl))
+        else:
+            # Add to regular queue and start if under limit
+            self.download_queue.append(dl)
+            self._process_download_queue()
+
         self._save_downloads()
 
         print(f"DEBUG: Download queued for URL: {url}")
         self._update_queue_status()
+
+    def _is_google_drive_multi_part(self, url: str) -> bool:
+        """Check if URL is a Google Drive multi-part zip download."""
+        if not url:
+            return False
+        url_lower = url.lower()
+        return ('googleusercontent.com' in url_lower or 'drive.google.com' in url_lower) and \
+               ('part' in url_lower or 'zip' in url_lower)
+
+    def _start_google_drive_download(self, dl):
+        """Start a Google Drive download immediately."""
+        print(f"DEBUG: Starting Google Drive download: {dl.url}")
+        dl.start()
+
+    def _process_google_drive_queue(self):
+        """Process Google Drive multi-part zip downloads sequentially."""
+        if self.google_drive_downloading or not self.google_drive_queue:
+            return
+
+        if self.google_drive_queue:
+            self.google_drive_downloading = True
+            dl = self.google_drive_queue.pop(0)  # FIFO - first in, first out
+            print(f"DEBUG: Starting Google Drive download sequentially: {dl.url}")
+            dl.start()
+            # The finish handler will call this again after completion
     
     def _process_download_queue(self):
         """Process the download queue, starting downloads up to the limit."""
@@ -422,10 +468,19 @@ class MainWindow(QMainWindow):
 
     def _on_download_finished(self, dl):
         """Called when a download finishes (completed or error)."""
-        self.active_downloads = max(0, self.active_downloads - 1)
-        print(f"DEBUG: Download finished. Active: {self.active_downloads}, Queued: {len(self.download_queue)}")
-        # Process next item in queue
-        self._process_download_queue()
+        # Check if this was a Google Drive download
+        if self._is_google_drive_multi_part(dl.url):
+            self.google_drive_downloading = False
+            print(f"DEBUG: Google Drive download finished, processing next in queue")
+            # Add delay between Google Drive parts to prevent rate limiting
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(2000, self._process_google_drive_queue)  # 2 second delay
+        else:
+            self.active_downloads = max(0, self.active_downloads - 1)
+            print(f"DEBUG: Download finished. Active: {self.active_downloads}, Queued: {len(self.download_queue)}")
+            # Process next item in queue
+            self._process_download_queue()
+
         self._update_queue_status()
 
     def _update_queue_status(self):
