@@ -24,7 +24,7 @@ from server import RoxyAPIServer
 
 class MainWindow(QMainWindow):
     # Signal for download requests from HTTP API
-    download_requested = pyqtSignal(str, str)  # url, filename
+    download_requested = pyqtSignal(str, str, object)  # url, filename, additional_info
     
     def __init__(self):
         super().__init__()
@@ -342,12 +342,6 @@ class MainWindow(QMainWindow):
         """Add download from API call with additional parameters."""
         print(f"DEBUG: add_download_from_api called with URL: {url}")
         print(f"DEBUG: Provided filename: {filename}")
-
-        # Check for pending download info from API server
-        if additional_info is None and hasattr(self, '_pending_download_info'):
-            additional_info = self._pending_download_info
-            delattr(self, '_pending_download_info')
-
         print(f"DEBUG: Additional info: {additional_info}")
 
         # Force window to foreground using Windows API without changing flags

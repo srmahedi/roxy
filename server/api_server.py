@@ -113,9 +113,8 @@ class RoxyAPIHandler(BaseHTTPRequestHandler):
                             'postData': postData,
                             'documentUrl': documentUrl
                         }
-                        # Store the additional info temporarily and emit basic signal
-                        self.main_window._pending_download_info = download_info
-                        self.main_window.download_requested.emit(url, filename)
+                        # Pass download_info directly in the signal to avoid race conditions
+                        self.main_window.download_requested.emit(url, filename, download_info)
                         print(f"🔍 DEBUG: Emitted download_requested signal for URL: {url}")
                     except Exception as e:
                         print(f"🔍 DEBUG: Failed to emit signal: {e}")
