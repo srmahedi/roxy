@@ -98,6 +98,7 @@ class DownloadEngine:
         self.sections: List[DownloadSection] = []
         self.max_sections: int = 4
         self.min_section_size: int = 1024 * 1024  # 1MB
+        self.fallback_to_single_thread: bool = False  # Fallback flag for problematic servers
         
         # Mirror URLs
         self.mirrors: List[MirrorURL] = []
@@ -294,8 +295,8 @@ class DownloadEngine:
         """Create download sections based on file size and configuration"""
         self.sections.clear()
         
-        # If size is unknown or resume is not supported, create a single section
-        if self.file_size <= 0 or not self.resume_supported:
+        # If fallback is enabled, size is unknown, or resume is not supported, create a single section
+        if self.fallback_to_single_thread or self.file_size <= 0 or not self.resume_supported:
             end_pos = self.file_size - 1 if self.file_size > 0 else -1
             section = DownloadSection(
                 section_id=0,
@@ -410,8 +411,9 @@ class DownloadEngine:
         while not self.stop_event.is_set() and section.state != SectionState.DONE:
             try:
                 # Prepare headers for range request
-                headers = {}
-                if self.resume_supported:
+                headers = self.headers.copy()  # Include stored headers (cookies, referrer, etc.)
+                # Only use Range headers if not in fallback mode and resume is supported
+                if not self.fallback_to_single_thread and self.resume_supported:
                     if section.end > 0:
                         headers['Range'] = f'bytes={section.current}-{section.end}'
                     elif section.current > 0 and section.end != 0:
@@ -553,6 +555,18 @@ class DownloadEngine:
                         'error': str(e)
                     })
                     
+                    # Check if multiple sections are failing - trigger fallback to single-threaded mode
+                    if not self.fallback_to_single_thread and len(self.sections) > 1:
+                        error_count = sum(1 for s in self.sections if s.state == SectionState.ERROR)
+                        if error_count >= 2:  # If 2 or more sections fail, switch to single-threaded
+                            with self.lock:
+                                self.fallback_to_single_thread = True
+                                self.stop_event.set()
+                                self._emit_event('error', {
+                                    'message': 'Server does not support multi-threaded downloads. Retrying in single-threaded mode...'
+                                })
+                            return  # Exit early to avoid normal retry logic
+                    
                     # Retry logic
                     if not self.stop_event.is_set():
                         time.sleep(self.retry_delay)
@@ -659,8 +673,8 @@ class DownloadEngine:
                     try:
                         self.file_handle.flush()
                         self.file_handle.close()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"WARNING: Error closing file handle: {e}")
                     self.file_handle = None
 
             # Safe atomic replace with retry loop for Windows
@@ -673,15 +687,52 @@ class DownloadEngine:
                 last_err = None
                 for attempt in range(5):
                     try:
+                        # If target file exists, remove it first to avoid permission issues
+                        if os.path.exists(self.output_file):
+                            try:
+                                os.remove(self.output_file)
+                                print(f"Removed existing target file: {self.output_file}")
+                            except Exception as e:
+                                print(f"WARNING: Could not remove target file: {e}")
                         os.replace(self.temp_file, self.output_file)
                         replaced = True
+                        print(f"Successfully finalized download: {self.output_file}")
                         break
                     except Exception as err:
                         last_err = err
+                        print(f"Finalize attempt {attempt + 1} failed: {err}")
                         time.sleep(0.2)
 
                 if not replaced and os.path.exists(self.temp_file):
-                    raise last_err or RuntimeError(f"Could not replace target file {self.output_file}")
+                    # If replace failed, try to copy as fallback
+                    try:
+                        import shutil
+                        if os.path.exists(self.output_file):
+                            os.remove(self.output_file)
+                        shutil.copy2(self.temp_file, self.output_file)
+                        os.remove(self.temp_file)
+                        replaced = True
+                        print(f"Successfully finalized download using copy fallback: {self.output_file}")
+                    except Exception as copy_err:
+                        print(f"Copy fallback failed: {copy_err}")
+                        # If everything fails, rename temp to output as last resort
+                        try:
+                            if os.path.exists(self.output_file):
+                                timestamp = int(time.time())
+                                backup_path = f"{self.output_file}.backup_{timestamp}"
+                                os.rename(self.output_file, backup_path)
+                                print(f"Backed up existing file to: {backup_path}")
+                            os.rename(self.temp_file, self.output_file)
+                            replaced = True
+                            print(f"Successfully finalized download using rename fallback: {self.output_file}")
+                        except Exception as rename_err:
+                            print(f"ERROR: All finalize attempts failed. Last error: {rename_err}")
+                            # Don't raise error here - preserve the temp file for manual recovery
+                            self._emit_event('error', {
+                                'message': f'Failed to finalize download but data preserved in temp file: {self.temp_file}'
+                            })
+                            self.state = DownloadState.ERROR
+                            return
 
             if os.path.exists(self.output_file):
                 actual_size = os.path.getsize(self.output_file)
@@ -698,6 +749,7 @@ class DownloadEngine:
             })
 
         except Exception as e:
+            print(f"CRITICAL ERROR in finalize: {e}")
             self.state = DownloadState.ERROR
             self._emit_event('error', {'message': f'Failed to finalize download: {str(e)}'})
     
@@ -792,9 +844,19 @@ class DownloadEngine:
             self.session.close()
             self.session = None
         
-        # Clean up temp file if download failed
+        # Clean up temp file if download failed, but preserve it if we have significant data
+        # This prevents losing downloaded data on finalization errors
         if self.state != DownloadState.DONE and os.path.exists(self.temp_file):
             try:
-                os.remove(self.temp_file)
-            except Exception:
-                pass
+                # Only delete temp file if it's very small (likely corrupted or empty)
+                temp_size = os.path.getsize(self.temp_file)
+                if temp_size < 1024:  # Less than 1KB
+                    os.remove(self.temp_file)
+                else:
+                    # Preserve temp file with a different name for manual recovery
+                    import time
+                    recovery_path = f"{self.temp_file}.recovery_{int(time.time())}"
+                    os.rename(self.temp_file, recovery_path)
+                    print(f"Temp file preserved for recovery: {recovery_path}")
+            except Exception as e:
+                print(f"Could not clean up temp file: {e}")

@@ -15,7 +15,6 @@ A modern, feature-rich download manager built with Python and PyQt6. Roxy provid
 
 - ⚡ **Multi-Threaded Engine**: Custom FDM-style parallel chunk downloading with range request verification and mirror URL fallback support.
 - 🎬 **HLS / M3U8 Stream Downloader**: Automatic variant resolution (highest bitrate), segment fetching, AES-128 stream decryption, and seamless MP4 remuxing.
-- 📁 **Google Drive Resolver**: Automatic bypass and resolution of Google Drive warning confirmation pages for direct file downloads.
 - 🧩 **Chrome Extension Integration**: Intercepts Chrome downloads automatically and forwards URLs with full browser session metadata (cookies, referrer, user agent).
 - 🔄 **Duplicate Download Handling**: FDM-style duplicate detection prompt offering **Overwrite**, **Download Again** with sequence numbering (`file (1).ext`), or **Skip**.
 - ⏯️ **Smart Pause & Resume**: Full resume capability for interrupted or paused downloads.

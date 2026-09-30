@@ -79,6 +79,11 @@ class MainWindow(QMainWindow):
 
         self.action_buttons = {}
 
+        # Download queue for handling multiple concurrent downloads
+        self.max_concurrent_downloads = 3  # Limit concurrent downloads to prevent crashes
+        self.download_queue = []  # Queue of pending downloads
+        self.active_downloads = 0  # Count of currently active downloads
+
         self.table = CustomTableView()
         self.model = DownloadTableModel(self)
         self.table.setModel(self.model)
@@ -244,18 +249,41 @@ class MainWindow(QMainWindow):
         """
         norm_path = os.path.normpath(save_path).lower()
         is_file_dup = os.path.exists(save_path)
-        
+
         # Check if URL or save path is already in existing download table items
         existing_path_row = -1
         existing_url_row = -1
         for row, dl in enumerate(self.model.downloads):
-            if os.path.normpath(dl.save_path).lower() == norm_path:
-                existing_path_row = row
-            if dl.url == url:
-                existing_url_row = row
-        
+            # For normal downloads, consider any non-ERROR state as potential duplicate
+            # For Google Drive, be more lenient
+            is_gdrive = 'drive.google.com' in url or 'drive.usercontent.google.com' in url or 'takeout-download-drive.usercontent.google.com' in url
+
+            if is_gdrive:
+                # For Google Drive, only consider COMPLETED downloads as duplicates
+                if dl.status == DownloadItem.STATUS_COMPLETED:
+                    if os.path.normpath(dl.save_path).lower() == norm_path:
+                        existing_path_row = row
+                    if dl.url == url:
+                        existing_url_row = row
+            else:
+                # For normal downloads, consider any active download (not ERROR) as duplicate
+                if dl.status != DownloadItem.STATUS_ERROR:
+                    if os.path.normpath(dl.save_path).lower() == norm_path:
+                        existing_path_row = row
+                    if dl.url == url:
+                        existing_url_row = row
+
         is_url_dup = existing_url_row >= 0
         is_table_path_dup = existing_path_row >= 0
+
+        # For Google Drive URLs, be even more lenient - only trigger if file actually exists
+        if 'drive.google.com' in url or 'drive.usercontent.google.com' in url or 'takeout-download-drive.usercontent.google.com' in url:
+            # Only consider duplicate if file actually exists on disk
+            if not is_file_dup:
+                return save_path
+            # If file exists but download is not completed, allow download
+            if is_file_dup and not is_table_path_dup:
+                return save_path
 
         # If no duplicate detected at all, return original save_path
         if not (is_file_dup or is_url_dup or is_table_path_dup):
@@ -315,13 +343,17 @@ class MainWindow(QMainWindow):
                 return
 
             dl = DownloadItem(url, resolved_path, speed_limit, self)
+            dl.finished.connect(lambda: self._on_download_finished(dl))
             self.model.add_download(dl)
             self._refresh_action_buttons()
             # Register with file monitor
             self.file_monitor.register_download_file(dl.save_path, dl.download_id)
-            dl.start()
+
+            # Add to queue and start if under limit
+            self.download_queue.append(dl)
+            self._process_download_queue()
             self._save_downloads()
-            self.status_bar.showMessage(f"Added download: {os.path.basename(resolved_path)}", 3000)
+            self._update_queue_status()
 
     def add_download_from_api(self, url: str, filename: str = None, additional_info: dict = None):
         """Add download from API call with additional parameters."""
@@ -382,17 +414,48 @@ class MainWindow(QMainWindow):
                 dl.post_data = additional_info['postData']
             if additional_info.get('documentUrl'):
                 dl.document_url = additional_info['documentUrl']
-        
+
+        # Connect to download completion/finish signal
+        dl.finished.connect(lambda: self._on_download_finished(dl))
+
         self.model.add_download(dl)
         self._refresh_action_buttons()
         # Register with file monitor
         self.file_monitor.register_download_file(dl.save_path, dl.download_id)
-        dl.start()
+
+        # Add to queue and start if under limit
+        self.download_queue.append(dl)
+        self._process_download_queue()
         self._save_downloads()
-        
-        print(f"DEBUG: Download started for URL: {url}")
-        self.status_bar.showMessage(f"Added download from extension: {os.path.basename(resolved_path)}", 3000)
+
+        print(f"DEBUG: Download queued for URL: {url}")
+        self._update_queue_status()
     
+    def _process_download_queue(self):
+        """Process the download queue, starting downloads up to the limit."""
+        while self.download_queue and self.active_downloads < self.max_concurrent_downloads:
+            dl = self.download_queue.pop(0)
+            if dl.status == DownloadItem.STATUS_PENDING:
+                dl.start()
+                self.active_downloads += 1
+                print(f"DEBUG: Started download from queue. Active: {self.active_downloads}, Queued: {len(self.download_queue)}")
+                self._update_queue_status()
+
+    def _on_download_finished(self, dl):
+        """Called when a download finishes (completed or error)."""
+        self.active_downloads = max(0, self.active_downloads - 1)
+        print(f"DEBUG: Download finished. Active: {self.active_downloads}, Queued: {len(self.download_queue)}")
+        # Process next item in queue
+        self._process_download_queue()
+        self._update_queue_status()
+
+    def _update_queue_status(self):
+        """Update status bar with queue information."""
+        if self.download_queue:
+            self.status_bar.showMessage(f"Active: {self.active_downloads} | Queued: {len(self.download_queue)}")
+        else:
+            self.status_bar.showMessage("Ready")
+
     def update_settings(self, settings: dict):
         """Update settings from extension."""
         print(f"DEBUG: Updating settings: {settings}")
@@ -441,7 +504,10 @@ class MainWindow(QMainWindow):
     def start_all(self):
         for dl in self.model.downloads:
             if dl.status in [DownloadItem.STATUS_PAUSED, DownloadItem.STATUS_PENDING, DownloadItem.STATUS_STOPPED]:
-                dl.start()
+                # Add to queue instead of starting immediately
+                if dl not in self.download_queue:
+                    self.download_queue.append(dl)
+        self._process_download_queue()
         self.status_bar.showMessage("Starting all downloads", 3000)
 
     def stop_all(self):
@@ -524,10 +590,13 @@ class MainWindow(QMainWindow):
                 # Add to model
                 self.model.add_download(dl)
                 restored_count += 1
-                
+
+                # Connect to download completion/finish signal
+                dl.finished.connect(lambda: self._on_download_finished(dl))
+
                 # Register with file monitor
                 self.file_monitor.register_download_file(dl.save_path, dl.download_id)
-                
+
                 # Update status to reflect current state
                 if dl.status == DownloadItem.STATUS_DOWNLOADING:
                     # Change downloading status to paused on restore

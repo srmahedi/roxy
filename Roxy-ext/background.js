@@ -1875,7 +1875,7 @@ function startExtension()
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("Roxy Download Manager extension installed");
-  
+
   // Set default enabled state
   chrome.storage.local.get(['extensionEnabled'], (result) => {
     if (result.extensionEnabled === undefined) {
@@ -1883,8 +1883,21 @@ chrome.runtime.onInstalled.addListener(() => {
     }
     updateBadge(result.extensionEnabled !== false);
   });
-  
+
   startExtension();
+
+  // Add Google Drive domains to skip list after extension starts
+  setTimeout(() => {
+    if (roxyExt && roxyExt.diManager) {
+      const gdriveDomains = ['drive.google.com', 'drive.usercontent.google.com', 'takeout-download-drive.usercontent.google.com'];
+      gdriveDomains.forEach(domain => {
+        if (!roxyExtUtils.urlInSkipServers(roxyExt.diManager.skipHosts, `https://${domain}`)) {
+          roxyExt.diManager.skipHosts.push(domain);
+          console.log(`Added ${domain} to skip list for webRequest interceptor`);
+        }
+      });
+    }
+  }, 1000);
 });
 
 // Listen for storage changes to update badge
@@ -1897,6 +1910,78 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
         roxyExt.diManager.enable = isEnabled;
     }
   }
+});
+
+// Chrome Downloads API interceptor for authenticated downloads (e.g., Google Drive takeout)
+// This intercepts downloads AFTER Chrome has authenticated with cookies
+chrome.downloads.onCreated.addListener(async (downloadItem) => {
+  // Ignore internal Chrome downloads or data/blob URLs
+  if (
+    !downloadItem ||
+    !downloadItem.url ||
+    downloadItem.url.startsWith("blob:") ||
+    downloadItem.url.startsWith("data:")
+  ) {
+    return;
+  }
+
+  const targetUrl = downloadItem.finalUrl || downloadItem.url;
+
+  // Check if extension is enabled
+  chrome.storage.local.get(['extensionEnabled'], (result) => {
+    if (result.extensionEnabled === false) {
+      return;
+    }
+  });
+
+  // Only intercept if this is a Google Drive takeout URL or similar authenticated download
+  // that the webRequest API might miss
+  const isGDriveTakeout = targetUrl.includes('takeout-download-drive.usercontent.google.com') ||
+                          targetUrl.includes('drive.usercontent.google.com') ||
+                          targetUrl.includes('drive.google.com');
+
+  if (!isGDriveTakeout) {
+    return;
+  }
+
+  const suggestedFilename = downloadItem.filename
+    ? downloadItem.filename.split(/[\\/]/).pop()
+    : "";
+
+  // 1. Extract session cookies for the target URL
+  let cookieHeader = "";
+  try {
+    const cookies = await chrome.cookies.getAll({ url: targetUrl });
+    cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+  } catch (err) {
+    console.warn("Failed to fetch cookies for download:", err);
+  }
+
+  // 2. Cancel Chrome's native download immediately
+  chrome.downloads.cancel(downloadItem.id, () => {
+    if (chrome.runtime.lastError) {
+      console.warn("Cancel notice:", chrome.runtime.lastError.message);
+    } else {
+      // Remove cancelled item from Chrome download shelf/history
+      chrome.downloads.erase({ id: downloadItem.id });
+    }
+  });
+
+  // 3. Send URL, Cookies, and Referrer to the local Python GUI App
+  fetch("http://localhost:12580/api/download", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      url: targetUrl,
+      filename: suggestedFilename,
+      cookies: cookieHeader,
+      referrer: downloadItem.referrer || ""
+    })
+  }).catch((err) => {
+    console.error("Failed to connect to Roxy. Is it running?", err);
+  });
 });
 
 // Start extension on startup (for cases where onInstalled doesn't fire)

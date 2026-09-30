@@ -19,7 +19,8 @@ class DuplicateDownloadDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Duplicate Download Detected")
         self.setModal(True)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(450)
+        self.setMaximumWidth(600)
         self.setStyleSheet(DARK_QSS)
 
         self.action = self.ACTION_CANCEL
@@ -61,19 +62,34 @@ class DuplicateDownloadDialog(QDialog):
         info_layout = QVBoxLayout(info_frame)
         info_layout.setSpacing(6)
 
-        file_info = QLabel(f"<b>File:</b> {filename}")
+        # Truncate long filenames
+        display_filename = filename
+        if len(filename) > 50:
+            display_filename = filename[:47] + "..."
+        file_info = QLabel(f"<b>File:</b> {display_filename}")
         file_info.setStyleSheet("color: #E0E0E0;")
+        file_info.setToolTip(filename)  # Show full filename on hover
         file_info.setWordWrap(True)
         info_layout.addWidget(file_info)
 
-        path_info = QLabel(f"<b>Location:</b> {save_path}")
+        # Truncate long paths
+        display_path = save_path
+        if len(save_path) > 60:
+            display_path = "..." + save_path[-57:]
+        path_info = QLabel(f"<b>Location:</b> {display_path}")
         path_info.setStyleSheet("color: #888888; font-size: 11px;")
+        path_info.setToolTip(save_path)  # Show full path on hover
         path_info.setWordWrap(True)
         info_layout.addWidget(path_info)
 
         if url:
-            url_info = QLabel(f"<b>URL:</b> {url}")
+            # Truncate long URLs
+            display_url = url
+            if len(url) > 60:
+                display_url = url[:57] + "..."
+            url_info = QLabel(f"<b>URL:</b> {display_url}")
             url_info.setStyleSheet("color: #888888; font-size: 11px;")
+            url_info.setToolTip(url)  # Show full URL on hover
             url_info.setWordWrap(True)
             info_layout.addWidget(url_info)
 
