@@ -553,21 +553,29 @@ class MainWindow(QMainWindow):
                     if dl.total_bytes == -1:
                         dl.total_bytes = dl.downloaded_bytes
                 else:
-                    # For incomplete downloads, check if file still exists and has content
-                    if os.path.exists(dl.save_path):
-                        # Update downloaded_bytes to actual file size
+                    # For incomplete downloads, check if temp file exists (which contains downloaded data)
+                    temp_file = download_data.get('temp_file', '')
+                    # Restore temp file path to download engine first
+                    if temp_file and dl.download_engine:
+                        dl.download_engine.temp_file = temp_file
+                    
+                    if temp_file and os.path.exists(temp_file):
+                        # Use temp file size for resume
+                        try:
+                            actual_size = os.path.getsize(temp_file)
+                            dl.downloaded_bytes = actual_size
+                            print(f"Resuming download from temp file: {temp_file} ({actual_size} bytes)")
+                        except:
+                            dl.downloaded_bytes = 0
+                    elif os.path.exists(dl.save_path):
+                        # Fallback to main file if temp file doesn't exist
                         try:
                             actual_size = os.path.getsize(dl.save_path)
                             dl.downloaded_bytes = actual_size
-                            # Enable resume if file has content
-                            if actual_size > 0:
-                                dl._resume = True
                         except:
                             dl.downloaded_bytes = 0
-                            dl._resume = False
                     else:
                         dl.downloaded_bytes = 0
-                        dl._resume = False
                 
                 # Add to model
                 self.model.add_download(dl)

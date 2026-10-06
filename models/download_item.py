@@ -239,7 +239,15 @@ class DownloadItem(QObject):
                 return
         
         # Initialize and start download
-        os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+        dir_name = os.path.dirname(self.save_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        
+        # For resume: set downloaded_bytes in engine before initialization
+        # if we have progress from a previous session
+        if self.downloaded_bytes > 0:
+            self.download_engine.downloaded_bytes = self.downloaded_bytes
+        
         if self.download_engine.initialize_download(self.url, self.save_path):
             self.total_bytes = self.download_engine.file_size
             self.downloaded_bytes = self.download_engine.downloaded_bytes
@@ -310,7 +318,8 @@ class DownloadItem(QObject):
             'cookies': self.cookies,
             'user_agent': self.user_agent,
             'post_data': self.post_data,
-            'document_url': self.document_url
+            'document_url': self.document_url,
+            'temp_file': getattr(self.download_engine, 'temp_file', '') if self.download_engine else ''
         }
     
     @classmethod

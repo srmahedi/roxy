@@ -238,8 +238,13 @@ class DownloadEngine:
         self.output_file = output_file or self._extract_filename(url)
         self.temp_file = f"{self.output_file}.temp"
         
+        # Check for existing temp file BEFORE resetting state (for resume support)
+        temp_file_exists = os.path.exists(self.temp_file)
+        
+        # Save current downloaded_bytes if temp file exists (for restoration)
+        saved_downloaded_bytes = self.downloaded_bytes if temp_file_exists else 0
+        
         # Reset state
-        self.downloaded_bytes = 0
         self.sections.clear()
         self.mirrors.clear()
         self.current_mirror_index = 0
@@ -249,8 +254,11 @@ class DownloadEngine:
         self.query_file_info()
         
         # Check for existing temp file (resume)
-        if os.path.exists(self.temp_file):
+        if temp_file_exists:
             self._load_resume_state()
+        else:
+            # Only reset to 0 if no temp file exists
+            self.downloaded_bytes = 0
         
         # Create download sections
         self._create_sections()
