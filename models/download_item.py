@@ -227,7 +227,10 @@ class DownloadItem(QObject):
 
     def start(self):
         """Start or resume download using custom download engine."""
-        if self.status in (self.STATUS_COMPLETED, self.STATUS_DOWNLOADING):
+        if self.status == self.STATUS_COMPLETED:
+            # Don't restart completed downloads
+            return
+        if self.status == self.STATUS_DOWNLOADING:
             return
             
         self._configure_engine()

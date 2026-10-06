@@ -542,40 +542,70 @@ class MainWindow(QMainWindow):
                 # Restore download from saved state
                 dl = DownloadItem.from_dict(download_data, parent=self)
                 
-                # For completed downloads, only restore if file still exists
-                if dl.status == DownloadItem.STATUS_COMPLETED:
-                    if not os.path.exists(dl.save_path):
+                # Always check if the file exists and determine actual state
+                # This handles cases where saved status is incorrect
+                temp_file = download_data.get('temp_file', '')
+                if temp_file and dl.download_engine:
+                    dl.download_engine.temp_file = temp_file
+                
+                # First check if temp file exists and is complete
+                if temp_file and os.path.exists(temp_file):
+                    temp_size = os.path.getsize(temp_file)
+                    # If temp file matches expected size, try to finalize it
+                    if dl.total_bytes > 0 and temp_size >= dl.total_bytes:
+                        try:
+                            # Finalize the download by renaming temp to final
+                            out_dir = os.path.dirname(dl.save_path)
+                            if out_dir:
+                                os.makedirs(out_dir, exist_ok=True)
+                            if os.path.exists(dl.save_path):
+                                os.remove(dl.save_path)
+                            os.replace(temp_file, dl.save_path)
+                            dl.status = DownloadItem.STATUS_COMPLETED
+                            dl.downloaded_bytes = dl.total_bytes
+                            if dl.download_engine:
+                                dl.download_engine.state = dl.download_engine.state.DONE
+                            print(f"Finalized download from temp file: {dl.save_path}")
+                        except Exception as e:
+                            print(f"Failed to finalize temp file: {e}")
+                            dl.downloaded_bytes = temp_size
+                    else:
+                        # Temp file exists but not complete, resume from it
+                        dl.downloaded_bytes = temp_size
+                        print(f"Resuming download from temp file: {temp_file} ({temp_size} bytes)")
+                elif os.path.exists(dl.save_path):
+                    # File exists, check if it's complete
+                    actual_size = os.path.getsize(dl.save_path)
+                    # Check if the file matches expected size (is complete)
+                    if dl.total_bytes > 0 and actual_size >= dl.total_bytes:
+                        # Download is complete regardless of saved status
+                        dl.status = DownloadItem.STATUS_COMPLETED
+                        dl.downloaded_bytes = actual_size
+                        # Set engine state to DONE
+                        if dl.download_engine:
+                            dl.download_engine.state = dl.download_engine.state.DONE
+                        print(f"Restored as completed: {dl.save_path} ({actual_size} bytes)")
+                    elif dl.total_bytes <= 0:
+                        # Unknown file size - if file exists and has content, and was not ERROR, assume complete
+                        if dl.status != DownloadItem.STATUS_ERROR and actual_size > 0:
+                            dl.status = DownloadItem.STATUS_COMPLETED
+                            dl.downloaded_bytes = actual_size
+                            dl.total_bytes = actual_size
+                            if dl.download_engine:
+                                dl.download_engine.state = dl.download_engine.state.DONE
+                            print(f"Restored as completed (unknown size): {dl.save_path}")
+                        else:
+                            dl.downloaded_bytes = actual_size
+                    else:
+                        # File exists but incomplete (actual_size < total_bytes)
+                        dl.downloaded_bytes = actual_size
+                else:
+                    # File doesn't exist
+                    if dl.status == DownloadItem.STATUS_COMPLETED:
                         # File was deleted, skip this download
                         print(f"Skipping completed download - file not found: {dl.save_path}")
                         continue
-                    # File exists, restore as completed
-                    dl.downloaded_bytes = os.path.getsize(dl.save_path)
-                    if dl.total_bytes == -1:
-                        dl.total_bytes = dl.downloaded_bytes
-                else:
-                    # For incomplete downloads, check if temp file exists (which contains downloaded data)
-                    temp_file = download_data.get('temp_file', '')
-                    # Restore temp file path to download engine first
-                    if temp_file and dl.download_engine:
-                        dl.download_engine.temp_file = temp_file
-                    
-                    if temp_file and os.path.exists(temp_file):
-                        # Use temp file size for resume
-                        try:
-                            actual_size = os.path.getsize(temp_file)
-                            dl.downloaded_bytes = actual_size
-                            print(f"Resuming download from temp file: {temp_file} ({actual_size} bytes)")
-                        except:
-                            dl.downloaded_bytes = 0
-                    elif os.path.exists(dl.save_path):
-                        # Fallback to main file if temp file doesn't exist
-                        try:
-                            actual_size = os.path.getsize(dl.save_path)
-                            dl.downloaded_bytes = actual_size
-                        except:
-                            dl.downloaded_bytes = 0
-                    else:
-                        dl.downloaded_bytes = 0
+                    dl.downloaded_bytes = 0
                 
                 # Add to model
                 self.model.add_download(dl)
