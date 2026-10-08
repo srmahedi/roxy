@@ -517,16 +517,22 @@ class DownloadEngine:
 
         # Open a tqdm progress bar for console feedback, same style as the
         # reference script (unit B, auto-scaled, 1024-divisor)
-        filename_label = os.path.basename(self.output_file) or 'downloading'
-        self._tqdm_bar = tqdm(
-            desc=filename_label,
-            total=self.file_size if self.file_size > 0 else None,
-            unit='B',
-            unit_scale=True,
-            unit_divisor=1024,
-            dynamic_ncols=True,
-            leave=True,
-        )
+        # Skip tqdm if running in windowed mode (no stdout available)
+        import sys
+        if hasattr(sys, 'frozen') and sys.frozen:
+            # Running as PyInstaller exe - disable tqdm to avoid crashes
+            self._tqdm_bar = None
+        else:
+            filename_label = os.path.basename(self.output_file) or 'downloading'
+            self._tqdm_bar = tqdm(
+                desc=filename_label,
+                total=self.file_size if self.file_size > 0 else None,
+                unit='B',
+                unit_scale=True,
+                unit_divisor=1024,
+                dynamic_ncols=True,
+                leave=True,
+            )
         
         # Start download threads for each section
         for section in self.sections:
@@ -666,7 +672,11 @@ class DownloadEngine:
                         
                         # Update tqdm bar
                         if self._tqdm_bar is not None:
-                            self._tqdm_bar.update(chunk_size)
+                            try:
+                                self._tqdm_bar.update(chunk_size)
+                            except Exception:
+                                # Silently ignore tqdm errors (can happen with no console)
+                                pass
 
                         # Update progress
                         with self.lock:

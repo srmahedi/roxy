@@ -28,7 +28,7 @@ A modern, feature-rich download manager built with Python and PyQt6. Roxy provid
 ### Requirements
 - **Windows 10 / 11**
 - **Python 3.8+**
-- Python Dependencies: `PyQt6`, `watchdog`, `requests`, `urllib3`, `cryptography`
+- Python Dependencies: `PyQt6`, `watchdog`, `requests`, `urllib3`, `cryptography`, `tqdm`
 
 ### Quick Setup
 
