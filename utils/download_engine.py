@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from tqdm import tqdm
 
 
 class DownloadState(Enum):
@@ -129,15 +130,79 @@ class DownloadEngine:
         # HTTP session
         self.session = None
         self.timeout: int = 30
-        self.user_agent: str = "Roxy-Download-Engine/1.0"
+        self.user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         self.headers: Dict[str, str] = {}
         
         # Retry configuration
         self.max_retries: int = 3
         self.retry_delay: int = 5
+
+        # tqdm progress bar (console) — shared across all section threads
+        self._tqdm_bar = None
         
+    # ---------------------------------------------------------------------------
+    # Known CDN / vendor download portals that gate downloads behind a Referer.
+    # Maps a substring of the *download host* to the required Referer URL.
+    # Add more entries here as needed.
+    # ---------------------------------------------------------------------------
+    _CDN_REFERER_MAP = {
+        # AMD ---------------------------------------------------------------
+        'drivers.amd.com':          'https://www.amd.com/en/support',
+        'amd.com':                  'https://www.amd.com/en/support',
+        # NVIDIA ------------------------------------------------------------
+        'international.download.nvidia.com': 'https://www.nvidia.com/Download/index.aspx',
+        'us.download.nvidia.com':   'https://www.nvidia.com/Download/index.aspx',
+        'download.nvidia.com':      'https://www.nvidia.com/Download/index.aspx',
+        'nvidia.com':               'https://www.nvidia.com/Download/index.aspx',
+        # Intel -------------------------------------------------------------
+        'downloadmirror.intel.com': 'https://www.intel.com/content/www/us/en/download-center/home.html',
+        'download.intel.com':       'https://www.intel.com/content/www/us/en/download-center/home.html',
+        'intel.com':                'https://www.intel.com/content/www/us/en/download-center/home.html',
+        # Qualcomm ----------------------------------------------------------
+        'releases.linaro.org':      'https://releases.linaro.org/',
+        # Realtek -----------------------------------------------------------
+        'dlcdnet.asus.com':         'https://www.asus.com/support/',
+        'dlcdnets.asus.com':        'https://www.asus.com/support/',
+        # SourceForge -------------------------------------------------------
+        'sourceforge.net':          'https://sourceforge.net/',
+        'downloads.sourceforge.net':'https://sourceforge.net/',
+        # GitHub releases (CDN) ---------------------------------------------
+        'objects.githubusercontent.com': 'https://github.com/',
+        'github.com':               'https://github.com/',
+        # Microsoft / Sysinternals ------------------------------------------
+        'download.microsoft.com':   'https://www.microsoft.com/',
+        'aka.ms':                   'https://www.microsoft.com/',
+    }
+
+    def _auto_referer(self) -> str:
+        """Return an appropriate Referer header for the current download URL.
+
+        Checks the URL host against _CDN_REFERER_MAP (longest match wins),
+        then falls back to the origin (scheme + host) of the URL so the
+        server at minimum sees a same-site referer rather than nothing.
+        """
+        if not self.url:
+            return ''
+        try:
+            parsed = urlparse(self.url)
+            host = parsed.netloc.lower()
+            # Longest matching key wins (so 'drivers.amd.com' beats 'amd.com')
+            best_key = ''
+            best_referer = ''
+            for cdn_host, referer in self._CDN_REFERER_MAP.items():
+                if host == cdn_host or host.endswith('.' + cdn_host):
+                    if len(cdn_host) > len(best_key):
+                        best_key = cdn_host
+                        best_referer = referer
+            if best_referer:
+                return best_referer
+            # Generic fallback: use the site's own homepage as the referer
+            return f"{parsed.scheme}://{parsed.netloc}/"
+        except Exception:
+            return ''
+
     def create_session(self) -> requests.Session:
-        """Create HTTP session with retry logic"""
+        """Create HTTP session with retry logic and browser-like headers."""
         session = requests.Session()
         
         # Configure retry strategy
@@ -152,86 +217,171 @@ class DownloadEngine:
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         
-        session.headers.update({
+        # Send a full browser-like header set so download sites (AMD, NVIDIA,
+        # Softpedia, SourceForge, etc.) don't fingerprint and block the request.
+        browser_headers = {
             'User-Agent': self.user_agent,
-            **self.headers
-        })
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Sec-Ch-Ua': '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+        }
+
+        # Inject Referer automatically if the caller hasn't already provided one.
+        # Many vendor CDNs (AMD, NVIDIA, Intel …) reject requests without it.
+        if 'Referer' not in self.headers and 'referer' not in self.headers:
+            auto_ref = self._auto_referer()
+            if auto_ref:
+                browser_headers['Referer'] = auto_ref
+
+        # Merge any extra headers (cookies, explicit referrer, etc.) on top, then apply
+        browser_headers.update(self.headers)
+        session.headers.update(browser_headers)
         
         return session
-    
+
+    def _refresh_session_headers(self):
+        """Refresh the user-agent and extra headers on an already-open session."""
+        if self.session is None:
+            return
+        self.session.headers['User-Agent'] = self.user_agent
+        # Inject auto-referer if no explicit referer is set
+        if 'Referer' not in self.headers and 'referer' not in self.headers:
+            auto_ref = self._auto_referer()
+            if auto_ref:
+                self.session.headers['Referer'] = auto_ref
+        # Re-apply any custom headers (cookies, referrer, etc.)
+        for key, value in self.headers.items():
+            self.session.headers[key] = value
+
+    # Minimum plausible size for a binary file served by HEAD.
+    # If HEAD returns Content-Length below this we treat it as unreliable
+    # and re-probe with a streaming GET (Akamai / AMD CDN quirk).
+    _MIN_RELIABLE_HEAD_SIZE = 1024  # 1 KB
+
     def query_file_info(self) -> bool:
-        """Query file size and check resume support with HEAD and GET fallback"""
+        """Query file size and resume support.
+
+        Strategy:
+          1. Try HEAD first (fast, no body).
+          2. If HEAD succeeds but Content-Length looks bogus (< 1 KB for a
+             binary, or Content-Encoding is set making the length ambiguous),
+             discard and re-probe with a streaming GET — which is what the
+             reference script does and what AMD's Akamai CDN requires.
+          3. If HEAD fails entirely, fall straight to streaming GET.
+        """
         try:
             if not self.session:
                 self.session = self.create_session()
-            
-            response = None
+
+            head_resp = None
             try:
-                # First try HEAD request
-                response = self.session.head(
+                head_resp = self.session.head(
                     self.url,
                     timeout=self.timeout,
                     allow_redirects=True
                 )
-                if response.status_code not in (200, 206):
-                    response = None
+                if head_resp.status_code not in (200, 206):
+                    head_resp = None
             except Exception:
-                response = None
+                head_resp = None
 
-            # Fallback to stream GET request if HEAD failed
-            if response is None:
+            # Decide whether the HEAD result is trustworthy.
+            # Akamai (used by AMD, NVIDIA …) returns Content-Length: 20 on HEAD
+            # while the real file is hundreds of MB — always lies when
+            # Content-Encoding is also present.
+            head_size = 0
+            head_usable = False
+            if head_resp is not None:
+                cl = head_resp.headers.get('content-length', '')
+                head_size = int(cl) if cl.isdigit() else 0
+                encoding = head_resp.headers.get('content-encoding', '')
+                # HEAD size is usable only when:
+                #   - it's at least 1 KB (rules out stub/token responses), AND
+                #   - there's no Content-Encoding that makes the length ambiguous
+                head_usable = head_size >= self._MIN_RELIABLE_HEAD_SIZE and not encoding
+
+            # If HEAD was usable, read metadata from it; otherwise do a GET probe.
+            if head_usable:
+                probe = head_resp
+                print(f"DEBUG: HEAD trustworthy — size={head_size}")
+            else:
+                if head_resp is not None:
+                    head_resp.close()
+                    print(f"DEBUG: HEAD size={head_size} unreliable, falling back to GET probe")
+                else:
+                    print("DEBUG: HEAD failed, using GET probe")
                 try:
-                    response = self.session.get(
+                    probe = self.session.get(
                         self.url,
                         stream=True,
                         timeout=self.timeout,
                         allow_redirects=True
                     )
+                    if probe.status_code not in (200, 206):
+                        probe.close()
+                        probe = None
                 except Exception:
-                    response = None
+                    probe = None
 
-            if response is not None:
-                # Get file size
-                content_length = response.headers.get('content-length')
-                if content_length and content_length.isdigit():
-                    self.file_size = int(content_length)
-                
-                # Check resume support
-                accept_ranges = response.headers.get('accept-ranges', '').lower()
-                self.resume_supported = 'bytes' in accept_ranges or 'content-range' in response.headers
-                
-                # Get suggested filename from Content-Disposition
-                content_disposition = response.headers.get('content-disposition', '')
-                if content_disposition and 'filename' in content_disposition.lower():
-                    import re
-                    from utils.helpers import sanitize_filename
-                    fn_match = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)', content_disposition, re.IGNORECASE)
-                    if fn_match:
-                        suggested = sanitize_filename(fn_match.group(1).strip('"\''))
-                        if suggested:
-                            cur_base = os.path.basename(self.output_file) if self.output_file else ""
-                            cur_ext = os.path.splitext(cur_base)[1]
-                            
-                            if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
-                                dir_name = os.path.dirname(self.output_file) if self.output_file else ""
-                                self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
-                                self.temp_file = f"{self.output_file}.temp"
+            if probe is None:
+                return False
 
-                if hasattr(response, 'close'):
-                    response.close()
-                
-                self._emit_event('file_info_queried', {
-                    'file_size': self.file_size,
-                    'resume_supported': self.resume_supported
-                })
-                
-                return True
-            return False
-            
+            # --- Extract metadata from the chosen response ---
+
+            # File size
+            content_length = probe.headers.get('content-length', '')
+            if content_length.isdigit():
+                self.file_size = int(content_length)
+
+            # Resume support
+            accept_ranges = probe.headers.get('accept-ranges', '').lower()
+            self.resume_supported = (
+                'bytes' in accept_ranges or
+                'content-range' in probe.headers
+            )
+
+            # Suggested filename from Content-Disposition
+            content_disposition = probe.headers.get('content-disposition', '')
+            if content_disposition and 'filename' in content_disposition.lower():
+                import re
+                from utils.helpers import sanitize_filename
+                fn_match = re.search(
+                    r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)',
+                    content_disposition, re.IGNORECASE
+                )
+                if fn_match:
+                    suggested = sanitize_filename(fn_match.group(1).strip('"\''))
+                    if suggested:
+                        cur_base = os.path.basename(self.output_file) if self.output_file else ''
+                        cur_ext = os.path.splitext(cur_base)[1]
+                        if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
+                            dir_name = os.path.dirname(self.output_file) if self.output_file else ''
+                            self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
+                            self.temp_file = f"{self.output_file}.temp"
+
+            if hasattr(probe, 'close'):
+                probe.close()
+
+            print(f"DEBUG: file_size={self.file_size}, resume_supported={self.resume_supported}")
+            self._emit_event('file_info_queried', {
+                'file_size': self.file_size,
+                'resume_supported': self.resume_supported
+            })
+            return True
+
         except Exception as e:
             self._emit_event('error', {'message': f'Failed to query file info: {str(e)}'})
             return False
-    
+
     def initialize_download(self, url: str, output_file: str = "") -> bool:
         """Initialize download with URL and output file"""
         self.url = url
@@ -364,6 +514,19 @@ class DownloadEngine:
         # Update state
         self.state = DownloadState.DOWNLOADING
         self._emit_event('download_started', {'url': self.url})
+
+        # Open a tqdm progress bar for console feedback, same style as the
+        # reference script (unit B, auto-scaled, 1024-divisor)
+        filename_label = os.path.basename(self.output_file) or 'downloading'
+        self._tqdm_bar = tqdm(
+            desc=filename_label,
+            total=self.file_size if self.file_size > 0 else None,
+            unit='B',
+            unit_scale=True,
+            unit_divisor=1024,
+            dynamic_ncols=True,
+            leave=True,
+        )
         
         # Start download threads for each section
         for section in self.sections:
@@ -501,6 +664,10 @@ class DownloadEngine:
                             else:
                                 break
                         
+                        # Update tqdm bar
+                        if self._tqdm_bar is not None:
+                            self._tqdm_bar.update(chunk_size)
+
                         # Update progress
                         with self.lock:
                             section.current += chunk_size
@@ -647,6 +814,14 @@ class DownloadEngine:
         try:
             self.stop_event.set()
 
+            # Close tqdm bar
+            if self._tqdm_bar is not None:
+                try:
+                    self._tqdm_bar.close()
+                except Exception:
+                    pass
+                self._tqdm_bar = None
+
             # Close file handle safely
             with self.file_lock:
                 if self.file_handle:
@@ -750,7 +925,15 @@ class DownloadEngine:
     def stop_download(self):
         """Stop the download"""
         self.stop_event.set()
-        
+
+        # Close tqdm bar
+        if self._tqdm_bar is not None:
+            try:
+                self._tqdm_bar.close()
+            except Exception:
+                pass
+            self._tqdm_bar = None
+
         # Wait for threads to finish
         for thread in self.download_threads:
             if thread != threading.current_thread() and thread.is_alive():

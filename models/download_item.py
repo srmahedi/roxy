@@ -89,6 +89,11 @@ class DownloadItem(QObject):
             headers['Cookie'] = self.cookies
         self.download_engine.headers = headers
 
+        # If a session already exists (e.g. on retry/resume), refresh its
+        # headers so the correct User-Agent and cookies are applied immediately.
+        if hasattr(self.download_engine, '_refresh_session_headers'):
+            self.download_engine._refresh_session_headers()
+
     def _on_download_event(self, event):
         """Handle download events from the engine."""
         if event.event_type == 'download_started':
