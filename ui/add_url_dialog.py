@@ -2,7 +2,7 @@
 Add URL Dialog for adding new downloads
 """
 import os
-from PyQt6.QtCore import QStandardPaths, QThread, pyqtSignal
+from PyQt6.QtCore import QStandardPaths, QThread, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QPushButton, QSpinBox, QDialogButtonBox, QMessageBox, QFileDialog, QLabel
@@ -100,13 +100,34 @@ class AddUrlDialog(QDialog):
         self.speed_limit = 0
         self.validator_thread = None
         self.url_valid = None  # None = not checked, True = valid, False = invalid
+        self.check_timer = QTimer()
+        self.check_timer.setSingleShot(True)
+        self.check_timer.timeout.connect(self.check_url)
+        self.url_edit.textChanged.connect(self.on_url_text_changed)
+        self._disable_auto_check = False  # Flag to disable auto-check when setting URL programmatically
 
     def closeEvent(self, event):
         """Clean up validator thread when dialog is closed"""
         if self.validator_thread and self.validator_thread.isRunning():
             self.validator_thread.quit()
             self.validator_thread.wait(1000)  # Wait up to 1 second
+        if self.check_timer:
+            self.check_timer.stop()
         super().closeEvent(event)
+
+    def on_url_text_changed(self):
+        """Handle URL text changes - auto-check after user stops typing"""
+        # Skip auto-check if disabled (when setting URL programmatically)
+        if self._disable_auto_check:
+            return
+
+        # Cancel any pending check
+        self.check_timer.stop()
+        # Reset validation status when URL changes
+        self.url_valid = None
+        self.url_status_label.setText("")
+        # Schedule auto-check after 500ms of no typing
+        self.check_timer.start(500)
 
     def browse_save_path(self):
         url = self.url_edit.text().strip()
@@ -126,7 +147,7 @@ class AddUrlDialog(QDialog):
         """Check if the URL is accessible"""
         url = self.url_edit.text().strip()
         if not url:
-            QMessageBox.warning(self, "Missing URL", "Please enter a URL first.")
+            # Silently return if URL is empty (don't show warning for auto-check on dialog open)
             return
 
         self.url_status_label.setText("Checking...")

@@ -368,12 +368,15 @@ class MainWindow(QMainWindow):
 
         # Show confirmation dialog pre-populated with URL and filename
         dialog = AddUrlDialog(self)
+        dialog._disable_auto_check = True  # Disable auto-check when setting URL programmatically
         dialog.url_edit.setText(url)
         dialog.save_path_edit.setText(save_path)
         dialog.speed_limit_spin.setValue(0)  # Default to unlimited
+        dialog._disable_auto_check = False  # Re-enable auto-check
 
-        # Auto-check the URL when opening from extension
-        dialog.check_url()
+        # Auto-check the URL when opening from extension (URL is pre-populated)
+        if url:
+            dialog.check_url()
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             url = dialog.url
