@@ -335,7 +335,7 @@ class MainWindow(QMainWindow):
             self._update_queue_status()
 
     def add_download_from_api(self, url: str, filename: str = None, additional_info: dict = None):
-        """Add download from API call with additional parameters."""
+        """Add download from API call with additional parameters - shows confirmation dialog."""
         print(f"DEBUG: add_download_from_api called with URL: {url}")
         print(f"DEBUG: Provided filename: {filename}")
         print(f"DEBUG: Additional info: {additional_info}")
@@ -366,49 +366,65 @@ class MainWindow(QMainWindow):
 
         save_path = os.path.join(downloads_dir, extracted_filename)
 
-        resolved_path = self._check_and_resolve_duplicate(url, save_path)
-        if not resolved_path:
-            self.status_bar.showMessage("Extension download cancelled (duplicate skipped)", 3000)
-            return
+        # Show confirmation dialog pre-populated with URL and filename
+        dialog = AddUrlDialog(self)
+        dialog.url_edit.setText(url)
+        dialog.save_path_edit.setText(save_path)
+        dialog.speed_limit_spin.setValue(0)  # Default to unlimited
 
-        print(f"DEBUG: Creating download item with save path: {resolved_path}")
+        # Auto-check the URL when opening from extension
+        dialog.check_url()
 
-        dl = DownloadItem(url, resolved_path, 0, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            url = dialog.url
+            save_path = dialog.selected_path
+            speed_limit = dialog.speed_limit_spin.value()
 
-        # Force single-threaded mode for Google Drive to prevent Range 403/HTML errors
-        if 'googleusercontent.com' in url.lower() or 'drive.google.com' in url.lower():
-            dl.download_engine.fallback_to_single_thread = True
+            resolved_path = self._check_and_resolve_duplicate(url, save_path)
+            if not resolved_path:
+                self.status_bar.showMessage("Extension download cancelled (duplicate skipped)", 3000)
+                return
 
+            print(f"DEBUG: Creating download item with save path: {resolved_path}")
 
-        # Add additional information if provided
-        if additional_info:
-            if additional_info.get('referrer'):
-                dl.referrer = additional_info['referrer']
-            if additional_info.get('cookies'):
-                dl.cookies = additional_info['cookies']
-            if additional_info.get('userAgent'):
-                dl.user_agent = additional_info['userAgent']
-            if additional_info.get('postData'):
-                dl.post_data = additional_info['postData']
-            if additional_info.get('documentUrl'):
-                dl.document_url = additional_info['documentUrl']
+            dl = DownloadItem(url, resolved_path, speed_limit, self)
 
-        # Connect to download completion/finish signal
-        dl.finished.connect(lambda: self._on_download_finished(dl))
+            # Force single-threaded mode for Google Drive to prevent Range 403/HTML errors
+            if 'googleusercontent.com' in url.lower() or 'drive.google.com' in url.lower():
+                dl.download_engine.fallback_to_single_thread = True
 
-        self.model.add_download(dl)
-        self._refresh_action_buttons()
-        # Register with file monitor
-        self.file_monitor.register_download_file(dl.save_path, dl.download_id)
+            # Add additional information if provided
+            if additional_info:
+                if additional_info.get('referrer'):
+                    dl.referrer = additional_info['referrer']
+                if additional_info.get('cookies'):
+                    dl.cookies = additional_info['cookies']
+                if additional_info.get('userAgent'):
+                    dl.user_agent = additional_info['userAgent']
+                if additional_info.get('postData'):
+                    dl.post_data = additional_info['postData']
+                if additional_info.get('documentUrl'):
+                    dl.document_url = additional_info['documentUrl']
 
-        # Add to regular queue and start if under limit
-        self.download_queue.append(dl)
-        self._process_download_queue()
+            # Connect to download completion/finish signal
+            dl.finished.connect(lambda: self._on_download_finished(dl))
 
-        self._save_downloads()
+            self.model.add_download(dl)
+            self._refresh_action_buttons()
+            # Register with file monitor
+            self.file_monitor.register_download_file(dl.save_path, dl.download_id)
 
-        print(f"DEBUG: Download queued for URL: {url}")
-        self._update_queue_status()
+            # Add to regular queue and start if under limit
+            self.download_queue.append(dl)
+            self._process_download_queue()
+
+            self._save_downloads()
+
+            print(f"DEBUG: Download queued for URL: {url}")
+            self._update_queue_status()
+        else:
+            print(f"DEBUG: User cancelled download from extension")
+            self.status_bar.showMessage("Download cancelled", 3000)
 
 
     

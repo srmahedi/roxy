@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from tqdm import tqdm
 
 
 class DownloadState(Enum):
@@ -136,9 +135,6 @@ class DownloadEngine:
         # Retry configuration
         self.max_retries: int = 3
         self.retry_delay: int = 5
-
-        # tqdm progress bar (console) — shared across all section threads
-        self._tqdm_bar = None
         
     # ---------------------------------------------------------------------------
     # Known CDN / vendor download portals that gate downloads behind a Referer.
@@ -312,13 +308,9 @@ class DownloadEngine:
             # If HEAD was usable, read metadata from it; otherwise do a GET probe.
             if head_usable:
                 probe = head_resp
-                print(f"DEBUG: HEAD trustworthy — size={head_size}")
             else:
                 if head_resp is not None:
                     head_resp.close()
-                    print(f"DEBUG: HEAD size={head_size} unreliable, falling back to GET probe")
-                else:
-                    print("DEBUG: HEAD failed, using GET probe")
                 try:
                     probe = self.session.get(
                         self.url,
@@ -333,7 +325,9 @@ class DownloadEngine:
                     probe = None
 
             if probe is None:
-                return False
+                # Allow download to proceed even if probes fail
+                # This handles URLs with authentication tokens in query parameters
+                return True
 
             # --- Extract metadata from the chosen response ---
 
@@ -371,7 +365,6 @@ class DownloadEngine:
             if hasattr(probe, 'close'):
                 probe.close()
 
-            print(f"DEBUG: file_size={self.file_size}, resume_supported={self.resume_supported}")
             self._emit_event('file_info_queried', {
                 'file_size': self.file_size,
                 'resume_supported': self.resume_supported
@@ -515,25 +508,6 @@ class DownloadEngine:
         self.state = DownloadState.DOWNLOADING
         self._emit_event('download_started', {'url': self.url})
 
-        # Open a tqdm progress bar for console feedback, same style as the
-        # reference script (unit B, auto-scaled, 1024-divisor)
-        # Skip tqdm if running in windowed mode (no stdout available)
-        import sys
-        if hasattr(sys, 'frozen') and sys.frozen:
-            # Running as PyInstaller exe - disable tqdm to avoid crashes
-            self._tqdm_bar = None
-        else:
-            filename_label = os.path.basename(self.output_file) or 'downloading'
-            self._tqdm_bar = tqdm(
-                desc=filename_label,
-                total=self.file_size if self.file_size > 0 else None,
-                unit='B',
-                unit_scale=True,
-                unit_divisor=1024,
-                dynamic_ncols=True,
-                leave=True,
-            )
-        
         # Start download threads for each section
         for section in self.sections:
             if section.state != SectionState.DONE:
@@ -669,14 +643,6 @@ class DownloadEngine:
                                 self.file_handle.write(chunk)
                             else:
                                 break
-                        
-                        # Update tqdm bar
-                        if self._tqdm_bar is not None:
-                            try:
-                                self._tqdm_bar.update(chunk_size)
-                            except Exception:
-                                # Silently ignore tqdm errors (can happen with no console)
-                                pass
 
                         # Update progress
                         with self.lock:
@@ -824,14 +790,6 @@ class DownloadEngine:
         try:
             self.stop_event.set()
 
-            # Close tqdm bar
-            if self._tqdm_bar is not None:
-                try:
-                    self._tqdm_bar.close()
-                except Exception:
-                    pass
-                self._tqdm_bar = None
-
             # Close file handle safely
             with self.file_lock:
                 if self.file_handle:
@@ -935,14 +893,6 @@ class DownloadEngine:
     def stop_download(self):
         """Stop the download"""
         self.stop_event.set()
-
-        # Close tqdm bar
-        if self._tqdm_bar is not None:
-            try:
-                self._tqdm_bar.close()
-            except Exception:
-                pass
-            self._tqdm_bar = None
 
         # Wait for threads to finish
         for thread in self.download_threads:

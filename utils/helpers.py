@@ -125,18 +125,25 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
     """
     Extract the real filename from a URL using HTTP headers.
     Falls back to URL parsing if headers don't provide a filename.
-    
+
     Args:
         url: The URL to extract filename from
         provided_filename: Optional filename provided by Chrome extension or other source
         cookies: Optional Cookie header string (e.g. from the browser extension) used
                  when probing authenticated URLs.
         referrer: Optional Referer header string.
-        
+
     Returns:
         The extracted filename with proper extension
     """
+    # First, extract filename from URL path to get the correct extension
+    from urllib.parse import urlparse
+    url_path = url.split('?')[0].split('#')[0]
+    url_filename = os.path.basename(url_path)
+    url_name, url_ext = os.path.splitext(url_filename)
+
     # If a valid filename is provided with extension and is not generic or a UUID, use it
+    # BUT prefer URL extension if provided filename has a different/wrong extension
     if provided_filename and provided_filename.strip():
         # Discard if provided_filename looks like a raw URL or URL path segment
         # (e.g. extension bug: "download?id=abc&export=..." sent as filename)
@@ -146,12 +153,21 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
 
     if provided_filename and provided_filename.strip():
         clean_provided = sanitize_filename(provided_filename)
+        provided_name, provided_ext = os.path.splitext(clean_provided)
         uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        name_without_ext, ext = os.path.splitext(clean_provided)
-        is_uuid = bool(re.match(uuid_pattern, name_without_ext.lower()))
-        is_generic = name_without_ext.lower() in ('download', 'file', 'index', 'view', 'stream', 'attachment')
-        
-        if not is_uuid and not is_generic and ext:
+        is_uuid = bool(re.match(uuid_pattern, provided_name.lower()))
+        is_generic = provided_name.lower() in ('download', 'file', 'index', 'view', 'stream', 'attachment')
+
+        # If URL has a clear extension (like .mp4) and provided has a different one (like .htm),
+        # trust the URL extension more
+        if url_ext and provided_ext and url_ext != provided_ext:
+            # Use the name from provided_filename but with the extension from URL
+            if not is_uuid and not is_generic:
+                final_name = provided_name + url_ext
+                print(f"DEBUG: URL and provided extension mismatch - using {final_name}")
+                return sanitize_filename(final_name)
+
+        if not is_uuid and not is_generic and provided_ext:
             return clean_provided
 
     # Build request headers, including optional auth cookies / referrer
@@ -166,7 +182,7 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
     try:
         resp = None
         try:
-            resp = requests.head(url, headers=probe_headers, allow_redirects=True, timeout=5)
+            resp = requests.head(url, headers=probe_headers, allow_redirects=True, timeout=10)
             if resp.status_code not in (200, 206):
                 resp = None
         except Exception:
@@ -174,7 +190,7 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
 
         if resp is None:
             try:
-                resp = requests.get(url, headers=probe_headers, stream=True, allow_redirects=True, timeout=5)
+                resp = requests.get(url, headers=probe_headers, stream=True, allow_redirects=True, timeout=10)
             except Exception:
                 resp = None
 
@@ -187,9 +203,12 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
                 filename_match = re.search(r'filename\*=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)["\']?', content_disposition, re.IGNORECASE)
                 if not filename_match:
                     filename_match = re.search(r'filename=["\']?([^"\';\r\n]+)["\']?', content_disposition, re.IGNORECASE)
-                
+
                 if filename_match:
                     filename = filename_match.group(1).strip('"\'')
+                    # URL-decode if it's RFC 5987 encoded (filename*=UTF-8''...)
+                    if '%' in filename:
+                        filename = unquote(filename)
                     if filename and len(filename) > 3:
                         resp.close()
                         return sanitize_filename(filename)
@@ -197,9 +216,10 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
         print(f"DEBUG: Error getting filename from headers: {e}")
     
     # Fallback to URL-based extraction
-    url_path = url.split('?')[0].split('#')[0]  # Remove query parameters
+    # Remove query parameters and fragment identifiers
+    url_path = url.split('?')[0].split('#')[0]
     filename = os.path.basename(url_path)
-    
+
     # Handle common URL patterns that don't end with filename
     generic_names = ('example.com', 'www.example.com', 'download', 'view', 'preview', 'edit')
     if not filename or len(filename) < 3 or '.' not in filename or filename.lower() in generic_names:
@@ -208,13 +228,16 @@ def extract_filename_from_url(url: str, provided_filename: str = None,
             if segment and '.' in segment and len(segment) > 3 and not segment.startswith('www.') and not segment.endswith('.com'):
                 filename = segment
                 break
-        
+
         if not filename or len(filename) < 3 or filename.lower() in generic_names:
+            # Try to extract filename from query parameters
             param_patterns = [r'[?&]filename=([^&]+)', r'[?&]file=([^&]+)', r'[?&]name=([^&]+)']
             for pattern in param_patterns:
                 match = re.search(pattern, url, re.IGNORECASE)
                 if match:
                     filename = match.group(1)
+                    # URL-decode the filename
+                    filename = unquote(filename)
                     if filename and len(filename) > 3:
                         return sanitize_filename(filename)
     
