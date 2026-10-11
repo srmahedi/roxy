@@ -28,7 +28,6 @@ RoxySettings.prototype.onGotPauseOnAllSites = function (paused_on_all_sites) {
 
 RoxySettings.prototype.addEventListeners = function () {
     document.getElementById('pauseCatchingForAllSites').addEventListener('change', this.onPauseCatchingChange.bind(this));
-    document.getElementById('allowBrowserDownload').addEventListener('change', this.onAllowBrowserDownloadChange.bind(this));
     document.getElementById('skipSmallerThan').addEventListener('change', this.onSkipSmallerThanChange.bind(this));
     document.getElementById('skipExtensions').addEventListener('change', this.onSkipExtensionsChange.bind(this));
     document.getElementById('catchExtensions').addEventListener('change', this.onCatchExtensionsChange.bind(this));
@@ -49,10 +48,9 @@ RoxySettings.prototype.addEventListeners = function () {
 RoxySettings.prototype.populateForm = function () {
     document.getElementById('roxy_loading').style.display = "none";
     document.getElementById('roxy_settings').style.display = "block";
-    
+
     // Download monitoring settings
     document.getElementById('pauseCatchingForAllSites').checked = this.pauseCatchingForAllSites;
-    document.getElementById('allowBrowserDownload').checked = this.settings.browser.monitor.allowDownload != "0";
     document.getElementById('skipSmallerThan').value = this.settings.browser.monitor.skipSmallerThan || "1024";
     document.getElementById('skipExtensions').value = this.settings.browser.monitor.skipExtensions || "";
     document.getElementById('catchExtensions').value = this.settings.browser.monitor.catchExtensions || "";
@@ -71,10 +69,6 @@ RoxySettings.prototype.populateForm = function () {
 RoxySettings.prototype.onPauseCatchingChange = function () {
     this.pauseCatchingForAllSites = document.getElementById('pauseCatchingForAllSites').checked;
     window.browser.runtime.sendMessage({type: "set_pause_on_all_sites_flag", pause: this.pauseCatchingForAllSites});
-};
-
-RoxySettings.prototype.onAllowBrowserDownloadChange = function () {
-    this.settings.browser.monitor.allowDownload = document.getElementById('allowBrowserDownload').checked ? "1" : "0";
 };
 
 RoxySettings.prototype.onSkipSmallerThanChange = function () {
@@ -143,7 +137,6 @@ RoxySettings.prototype.onResetSettings = function () {
                 },
                 monitor: {
                     enable: "1",
-                    allowDownload: "1",
                     skipSmallerThan: "1024",
                     skipExtensions: "",
                     skipServers: "",

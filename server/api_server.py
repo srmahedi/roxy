@@ -7,6 +7,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from utils.constants import MAIN_API_PORT
 
 
+
+
+
 class RoxyAPIHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Chrome extension integration."""
     
@@ -42,7 +45,6 @@ class RoxyAPIHandler(BaseHTTPRequestHandler):
                     },
                     'monitor': {
                         'enable': '1',
-                        'allowDownload': '1',
                         'skipSmallerThan': '1024',
                         'skipExtensions': '',
                         'skipServers': '',

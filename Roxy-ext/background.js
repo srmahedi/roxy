@@ -490,7 +490,6 @@ function DownloadsInterceptManager()
         browser.downloads.onDeterminingFilename;
 
     this.lastDownload = false;
-    this.allowBrowserDownload = true;
     this.skipIfKeyPressed = false;
     this.skipKeyPressed = false;
 }
@@ -959,19 +958,17 @@ DownloadsInterceptManager.prototype.passDownloadToRoxy = function(
         task,
         function (resp)
         {
+            // If Roxy server returns error or cancellation, just cancel the Chrome download
+            // Don't fallback to Chrome native download
             var cancelled = resp.result == "0";
-            if (resp.error || (cancelled && this.allowBrowserDownload))
-                this.returnDownload(downloadInfo, details);
+            if (resp.error || cancelled) {
+                console.log("Roxy server error or cancellation, not returning to browser:", downloadInfo.url);
+            }
         }.bind(this)
     );
 };
 
-DownloadsInterceptManager.prototype.returnDownload = function(
-    downloadInfo, details)
-{
-    console.log("Returning download to browser:", downloadInfo.url);
-    // Implementation for returning download to browser if needed
-};
+
 
 // ContextMenuManager class
 function ContextMenuManager()
@@ -1657,7 +1654,6 @@ TabsManager.prototype.onTimer = function()
 // RoxyDownloadsInterceptManager extends DownloadsInterceptManager
 function RoxyDownloadsInterceptManager()
 {
-    this.allowBrowserDownload = true;
 }
 
 RoxyDownloadsInterceptManager.prototype = new DownloadsInterceptManager();
@@ -1843,7 +1839,6 @@ RoxyExtension.prototype.applySettings = function()
     if (this.settings.browser.monitor.hasOwnProperty("catchExtensions"))
         this.diManager.catchExts = this.settings.browser.monitor.catchExtensions.toLowerCase();
     this.diManager.skipHosts = roxyExtUtils.skipServers2array(this.settings.browser.monitor.skipServers);
-    this.diManager.allowBrowserDownload = this.settings.browser.monitor.allowDownload != "0";
     this.diManager.skipIfKeyPressed = this.settings.browser.monitor.skipIfKeyPressed != "0";
 };
 

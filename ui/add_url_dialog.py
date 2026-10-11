@@ -25,11 +25,23 @@ class URLValidatorThread(QThread):
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
+            # First try HEAD request
             response = requests.head(self.url, headers=headers, allow_redirects=True, timeout=10)
             if response.status_code == 200 or response.status_code == 206:
                 content_length = response.headers.get('content-length', '')
                 file_size = int(content_length) if content_length.isdigit() else 0
-                self.validation_result.emit(True, "URL is accessible", file_size)
+                # Verify with a partial GET request to ensure it's actually downloadable
+                headers['Range'] = 'bytes=0-0'
+                get_response = requests.get(self.url, headers=headers, allow_redirects=True, timeout=10, stream=True)
+                if get_response.status_code in [200, 206]:
+                    # Try to read just the first byte to confirm download works
+                    try:
+                        next(get_response.iter_content(1))
+                        self.validation_result.emit(True, "URL is accessible", file_size)
+                    except:
+                        self.validation_result.emit(False, "URL exists but download failed", 0)
+                else:
+                    self.validation_result.emit(False, f"Download request returned {get_response.status_code} {get_response.reason}", 0)
             else:
                 self.validation_result.emit(False, f"Server returned {response.status_code} {response.reason}", 0)
         except requests.exceptions.Timeout:
@@ -105,6 +117,10 @@ class AddUrlDialog(QDialog):
         self.check_timer.timeout.connect(self.check_url)
         self.url_edit.textChanged.connect(self.on_url_text_changed)
         self._disable_auto_check = False  # Flag to disable auto-check when setting URL programmatically
+
+    def reject(self):
+        """Handle dialog rejection (Cancel button)."""
+        super().reject()
 
     def closeEvent(self, event):
         """Clean up validator thread when dialog is closed"""
