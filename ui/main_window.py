@@ -335,7 +335,7 @@ class MainWindow(QMainWindow):
             self._update_queue_status()
 
     def add_download_from_api(self, url: str, filename: str = None, additional_info: dict = None):
-        """Add download from API call with additional parameters - shows confirmation dialog."""
+        """Add download from API call with additional parameters."""
         print(f"DEBUG: add_download_from_api called with URL: {url}")
         print(f"DEBUG: Provided filename: {filename}")
         print(f"DEBUG: Additional info: {additional_info}")
@@ -366,68 +366,49 @@ class MainWindow(QMainWindow):
 
         save_path = os.path.join(downloads_dir, extracted_filename)
 
-        # Show confirmation dialog pre-populated with URL and filename
-        dialog = AddUrlDialog(self)
-        dialog._disable_auto_check = True  # Disable auto-check when setting URL programmatically
-        dialog.url_edit.setText(url)
-        dialog.save_path_edit.setText(save_path)
-        dialog.speed_limit_spin.setValue(0)  # Default to unlimited
-        dialog._disable_auto_check = False  # Re-enable auto-check
+        resolved_path = self._check_and_resolve_duplicate(url, save_path)
+        if not resolved_path:
+            self.status_bar.showMessage("Extension download cancelled (duplicate skipped)", 3000)
+            return
 
-        # Auto-check the URL when opening from extension (URL is pre-populated)
-        if url:
-            dialog.check_url()
+        print(f"DEBUG: Creating download item with save path: {resolved_path}")
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            url = dialog.url
-            save_path = dialog.selected_path
-            speed_limit = dialog.speed_limit_spin.value()
+        dl = DownloadItem(url, resolved_path, 0, self)
 
-            resolved_path = self._check_and_resolve_duplicate(url, save_path)
-            if not resolved_path:
-                self.status_bar.showMessage("Extension download cancelled (duplicate skipped)", 3000)
-                return
+        # Force single-threaded mode for Google Drive to prevent Range 403/HTML errors
+        if 'googleusercontent.com' in url.lower() or 'drive.google.com' in url.lower():
+            dl.download_engine.fallback_to_single_thread = True
 
-            print(f"DEBUG: Creating download item with save path: {resolved_path}")
 
-            dl = DownloadItem(url, resolved_path, speed_limit, self)
+        # Add additional information if provided
+        if additional_info:
+            if additional_info.get('referrer'):
+                dl.referrer = additional_info['referrer']
+            if additional_info.get('cookies'):
+                dl.cookies = additional_info['cookies']
+            if additional_info.get('userAgent'):
+                dl.user_agent = additional_info['userAgent']
+            if additional_info.get('postData'):
+                dl.post_data = additional_info['postData']
+            if additional_info.get('documentUrl'):
+                dl.document_url = additional_info['documentUrl']
 
-            # Force single-threaded mode for Google Drive to prevent Range 403/HTML errors
-            if 'googleusercontent.com' in url.lower() or 'drive.google.com' in url.lower():
-                dl.download_engine.fallback_to_single_thread = True
+        # Connect to download completion/finish signal
+        dl.finished.connect(lambda: self._on_download_finished(dl))
 
-            # Add additional information if provided
-            if additional_info:
-                if additional_info.get('referrer'):
-                    dl.referrer = additional_info['referrer']
-                if additional_info.get('cookies'):
-                    dl.cookies = additional_info['cookies']
-                if additional_info.get('userAgent'):
-                    dl.user_agent = additional_info['userAgent']
-                if additional_info.get('postData'):
-                    dl.post_data = additional_info['postData']
-                if additional_info.get('documentUrl'):
-                    dl.document_url = additional_info['documentUrl']
+        self.model.add_download(dl)
+        self._refresh_action_buttons()
+        # Register with file monitor
+        self.file_monitor.register_download_file(dl.save_path, dl.download_id)
 
-            # Connect to download completion/finish signal
-            dl.finished.connect(lambda: self._on_download_finished(dl))
+        # Add to regular queue and start if under limit
+        self.download_queue.append(dl)
+        self._process_download_queue()
 
-            self.model.add_download(dl)
-            self._refresh_action_buttons()
-            # Register with file monitor
-            self.file_monitor.register_download_file(dl.save_path, dl.download_id)
+        self._save_downloads()
 
-            # Add to regular queue and start if under limit
-            self.download_queue.append(dl)
-            self._process_download_queue()
-
-            self._save_downloads()
-
-            print(f"DEBUG: Download queued for URL: {url}")
-            self._update_queue_status()
-        else:
-            print(f"DEBUG: User cancelled download from extension")
-            self.status_bar.showMessage("Download cancelled", 3000)
+        print(f"DEBUG: Download queued for URL: {url}")
+        self._update_queue_status()
 
 
     
@@ -561,70 +542,32 @@ class MainWindow(QMainWindow):
                 # Restore download from saved state
                 dl = DownloadItem.from_dict(download_data, parent=self)
                 
-                # Always check if the file exists and determine actual state
-                # This handles cases where saved status is incorrect
-                temp_file = download_data.get('temp_file', '')
-                if temp_file and dl.download_engine:
-                    dl.download_engine.temp_file = temp_file
-                
-                # First check if temp file exists and is complete
-                if temp_file and os.path.exists(temp_file):
-                    temp_size = os.path.getsize(temp_file)
-                    # If temp file matches expected size, try to finalize it
-                    if dl.total_bytes > 0 and temp_size >= dl.total_bytes:
-                        try:
-                            # Finalize the download by renaming temp to final
-                            out_dir = os.path.dirname(dl.save_path)
-                            if out_dir:
-                                os.makedirs(out_dir, exist_ok=True)
-                            if os.path.exists(dl.save_path):
-                                os.remove(dl.save_path)
-                            os.replace(temp_file, dl.save_path)
-                            dl.status = DownloadItem.STATUS_COMPLETED
-                            dl.downloaded_bytes = dl.total_bytes
-                            if dl.download_engine:
-                                dl.download_engine.state = dl.download_engine.state.DONE
-                            print(f"Finalized download from temp file: {dl.save_path}")
-                        except Exception as e:
-                            print(f"Failed to finalize temp file: {e}")
-                            dl.downloaded_bytes = temp_size
-                    else:
-                        # Temp file exists but not complete, resume from it
-                        dl.downloaded_bytes = temp_size
-                        print(f"Resuming download from temp file: {temp_file} ({temp_size} bytes)")
-                elif os.path.exists(dl.save_path):
-                    # File exists, check if it's complete
-                    actual_size = os.path.getsize(dl.save_path)
-                    # Check if the file matches expected size (is complete)
-                    if dl.total_bytes > 0 and actual_size >= dl.total_bytes:
-                        # Download is complete regardless of saved status
-                        dl.status = DownloadItem.STATUS_COMPLETED
-                        dl.downloaded_bytes = actual_size
-                        # Set engine state to DONE
-                        if dl.download_engine:
-                            dl.download_engine.state = dl.download_engine.state.DONE
-                        print(f"Restored as completed: {dl.save_path} ({actual_size} bytes)")
-                    elif dl.total_bytes <= 0:
-                        # Unknown file size - if file exists and has content, and was not ERROR, assume complete
-                        if dl.status != DownloadItem.STATUS_ERROR and actual_size > 0:
-                            dl.status = DownloadItem.STATUS_COMPLETED
-                            dl.downloaded_bytes = actual_size
-                            dl.total_bytes = actual_size
-                            if dl.download_engine:
-                                dl.download_engine.state = dl.download_engine.state.DONE
-                            print(f"Restored as completed (unknown size): {dl.save_path}")
-                        else:
-                            dl.downloaded_bytes = actual_size
-                    else:
-                        # File exists but incomplete (actual_size < total_bytes)
-                        dl.downloaded_bytes = actual_size
-                else:
-                    # File doesn't exist
-                    if dl.status == DownloadItem.STATUS_COMPLETED:
+                # For completed downloads, only restore if file still exists
+                if dl.status == DownloadItem.STATUS_COMPLETED:
+                    if not os.path.exists(dl.save_path):
                         # File was deleted, skip this download
                         print(f"Skipping completed download - file not found: {dl.save_path}")
                         continue
-                    dl.downloaded_bytes = 0
+                    # File exists, restore as completed
+                    dl.downloaded_bytes = os.path.getsize(dl.save_path)
+                    if dl.total_bytes == -1:
+                        dl.total_bytes = dl.downloaded_bytes
+                else:
+                    # For incomplete downloads, check if file still exists and has content
+                    if os.path.exists(dl.save_path):
+                        # Update downloaded_bytes to actual file size
+                        try:
+                            actual_size = os.path.getsize(dl.save_path)
+                            dl.downloaded_bytes = actual_size
+                            # Enable resume if file has content
+                            if actual_size > 0:
+                                dl._resume = True
+                        except:
+                            dl.downloaded_bytes = 0
+                            dl._resume = False
+                    else:
+                        dl.downloaded_bytes = 0
+                        dl._resume = False
                 
                 # Add to model
                 self.model.add_download(dl)

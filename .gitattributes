@@ -42,6 +42,12 @@
 *.7z binary
 *.rar binary
 
+# Java archive files
+*.jar binary
+
+# Inno Setup files
+*.iss text eol=crlf
+
 # Executables
 *.exe binary
 *.dll binary

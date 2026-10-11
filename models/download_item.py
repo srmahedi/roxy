@@ -237,25 +237,25 @@ class DownloadItem(QObject):
             return
         if self.status == self.STATUS_DOWNLOADING:
             return
-            
+
         self._configure_engine()
-        
+
         if self.download_engine.state == self.download_engine.state.PAUSED:
             if self.download_engine.resume_download():
                 self.status = self.STATUS_DOWNLOADING
                 self.statusChanged.emit(self.status)
                 return
-        
+
         # Initialize and start download
         dir_name = os.path.dirname(self.save_path)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
-        
+
         # For resume: set downloaded_bytes in engine before initialization
         # if we have progress from a previous session
         if self.downloaded_bytes > 0:
             self.download_engine.downloaded_bytes = self.downloaded_bytes
-        
+
         if self.download_engine.initialize_download(self.url, self.save_path):
             self.total_bytes = self.download_engine.file_size
             self.downloaded_bytes = self.download_engine.downloaded_bytes
