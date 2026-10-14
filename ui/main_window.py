@@ -37,6 +37,10 @@ class MainWindow(QMainWindow):
         # Connect the download signal to the handler
         self.download_requested.connect(self.add_download_from_api)
 
+        # Start API server early for Chrome extension (before UI initialization)
+        self.api_server = RoxyAPIServer(port=MAIN_API_PORT, main_window=self)
+        self.api_server.start()
+
         self.title_bar = TitleBar(self)
         self.setMenuWidget(self.title_bar)
 
@@ -116,10 +120,6 @@ class MainWindow(QMainWindow):
         self.moving = False
         self.offset = QPoint()
 
-        # Start API server for Chrome extension
-        self.api_server = RoxyAPIServer(port=MAIN_API_PORT, main_window=self)
-        self.api_server.start()
-        
         # Initialize persistence manager
         self.persistence = PersistenceManager()
         

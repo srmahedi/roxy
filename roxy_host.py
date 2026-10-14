@@ -105,7 +105,7 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
         """Check if Roxy instance is running by checking its HTTP API"""
         try:
             req = urllib.request.Request('http://localhost:12580/api/status', method='GET')
-            with urllib.request.urlopen(req, timeout=2) as response:
+            with urllib.request.urlopen(req, timeout=0.5) as response:
                 is_running = (response.status == 200)
                 if is_running:
                     print("✓ Roxy instance detected via HTTP API on port 12580")
@@ -116,7 +116,7 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
             print(f"✗ HTTP API check failed: {e}")
             return False
     
-    def is_roxy_instance_running_with_retry(self, retries=3, delay=1):
+    def is_roxy_instance_running_with_retry(self, retries=2, delay=0.3):
         """Check if Roxy instance is running with retry logic"""
         for i in range(retries):
             if self.is_roxy_instance_running():
@@ -163,7 +163,7 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
                     method='POST'
                 )
 
-                with urllib.request.urlopen(req, timeout=10) as response:
+                with urllib.request.urlopen(req, timeout=3) as response:
                     print(f"Roxy response: {response.status}")
                 return
 
@@ -196,9 +196,9 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
 
             print(f"Roxy.exe launched from: {executable_path}")
 
-            # Wait for API server
-            for _ in range(20):
-                time.sleep(0.5)
+            # Wait for API server with faster polling (0.1s intervals)
+            for _ in range(50):  # 50 * 0.1s = 5s max (was 10s)
+                time.sleep(0.1)
                 if self.is_roxy_instance_running():
                     break
             else:
@@ -215,7 +215,7 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
                 method='POST'
             )
 
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=3) as response:
                 print(f"Download sent to Roxy: {response.status}")
 
         except Exception as e:
