@@ -7,6 +7,8 @@ Dark theme, custom title bar, multiple downloads, pause/resume, speed limit.
 
 import sys
 import os
+import tempfile
+import atexit
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtGui import QIcon, QPalette, QColor
 from PyQt6.QtCore import QDir
@@ -15,6 +17,9 @@ from utils.constants import DARK_QSS, APP_NAME, APP_ORG_NAME, APP_ID, SINGLE_INS
 from utils.helpers import get_resource_path, set_taskbar_icon
 from ui import MainWindow
 from server import SingleInstanceManager
+
+# Ready signal file path for faster host detection
+ROXY_READY_FILE = os.path.join(tempfile.gettempdir(), "roxy_api_ready.txt")
 
 
 def main():
@@ -100,7 +105,15 @@ def main():
     
     # Start listening for connections from other instances
     single_instance.listen_for_connections(window.add_download_from_api)
-    
+
+    # Create ready signal file for faster host detection
+    try:
+        with open(ROXY_READY_FILE, 'w') as f:
+            f.write("ready")
+        print(f"Created ready signal file: {ROXY_READY_FILE}")
+    except Exception as e:
+        print(f"Could not create ready signal file: {e}")
+
     window.show()
     
     # Check for roxy:// protocol or URL argument
@@ -145,8 +158,25 @@ def main():
     
     if url_to_download:
         window.add_download_from_api(url_to_download, filename_from_args)
-    
-    sys.exit(app.exec())
+
+    # Cleanup ready file on exit
+    def cleanup_ready_file():
+        try:
+            if os.path.exists(ROXY_READY_FILE):
+                os.remove(ROXY_READY_FILE)
+                print(f"Removed ready signal file: {ROXY_READY_FILE}")
+        except Exception as e:
+            print(f"Could not remove ready signal file: {e}")
+
+    app.aboutToQuit.connect(cleanup_ready_file)
+    atexit.register(cleanup_ready_file)
+
+    result = app.exec()
+
+    # Cleanup after app exits (in case aboutToQuit doesn't fire)
+    cleanup_ready_file()
+
+    sys.exit(result)
 
 if __name__ == "__main__":
     main()

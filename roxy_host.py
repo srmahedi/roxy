@@ -9,10 +9,14 @@ import sys
 import json
 import time
 import os
+import tempfile
 import urllib.request
 import urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+
+# Ready signal file path for faster detection
+ROXY_READY_FILE = os.path.join(tempfile.gettempdir(), "roxy_api_ready.txt")
 
 class RoxyLauncherHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
@@ -105,7 +109,7 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
         """Check if Roxy instance is running by checking its HTTP API"""
         try:
             req = urllib.request.Request('http://localhost:12580/api/status', method='GET')
-            with urllib.request.urlopen(req, timeout=0.5) as response:
+            with urllib.request.urlopen(req, timeout=0.2) as response:
                 is_running = (response.status == 200)
                 if is_running:
                     print("✓ Roxy instance detected via HTTP API on port 12580")
@@ -116,7 +120,7 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
             print(f"✗ HTTP API check failed: {e}")
             return False
     
-    def is_roxy_instance_running_with_retry(self, retries=2, delay=0.3):
+    def is_roxy_instance_running_with_retry(self, retries=1, delay=0.1):
         """Check if Roxy instance is running with retry logic"""
         for i in range(retries):
             if self.is_roxy_instance_running():
@@ -124,6 +128,22 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
             if i < retries - 1:
                 print(f"Retrying Roxy detection in {delay}s... (attempt {i+2}/{retries})")
                 time.sleep(delay)
+        return False
+
+    def check_roxy_ready_file(self):
+        """Check if Roxy ready signal file exists (faster than HTTP check)"""
+        try:
+            if os.path.exists(ROXY_READY_FILE):
+                # Verify Roxy is actually running by doing a quick HTTP check
+                if self.is_roxy_instance_running():
+                    print("✓ Roxy ready file detected and API confirmed")
+                    return True
+                else:
+                    # File exists but API not ready - might be stale
+                    print("⚠ Roxy ready file exists but API not responding, ignoring")
+                    return False
+        except Exception as e:
+            print(f"✗ Ready file check failed: {e}")
         return False
     
     def open_roxy_with_url(
@@ -152,7 +172,8 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
                 'documentUrl': documentUrl
             }
 
-            if self.is_roxy_instance_running_with_retry(retries=2, delay=0.5):
+            # Check ready file first (much faster than HTTP)
+            if self.check_roxy_ready_file():
                 print("Roxy is running - sending full download information")
                 data = json.dumps(payload).encode('utf-8')
 
@@ -163,7 +184,23 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
                     method='POST'
                 )
 
-                with urllib.request.urlopen(req, timeout=3) as response:
+                with urllib.request.urlopen(req, timeout=2) as response:
+                    print(f"Roxy response: {response.status}")
+                return
+
+            # Fallback to HTTP check if ready file not found
+            if self.is_roxy_instance_running_with_retry(retries=1, delay=0.1):
+                print("Roxy is running - sending full download information")
+                data = json.dumps(payload).encode('utf-8')
+
+                req = urllib.request.Request(
+                    'http://localhost:12580/api/download',
+                    data=data,
+                    headers={'Content-Type': 'application/json'},
+                    method='POST'
+                )
+
+                with urllib.request.urlopen(req, timeout=2) as response:
                     print(f"Roxy response: {response.status}")
                 return
 
@@ -196,11 +233,21 @@ class RoxyLauncherHandler(BaseHTTPRequestHandler):
 
             print(f"Roxy.exe launched from: {executable_path}")
 
-            # Wait for API server with faster polling (0.1s intervals)
-            for _ in range(50):  # 50 * 0.1s = 5s max (was 10s)
-                time.sleep(0.1)
-                if self.is_roxy_instance_running():
-                    break
+            # Wait for API server with faster polling (0.05s intervals)
+            # Check ready file first for faster detection
+            for i in range(40):  # 40 * 0.05s = 2s max (was 5s)
+                time.sleep(0.05)
+                # Check ready file first (no network overhead)
+                if os.path.exists(ROXY_READY_FILE):
+                    # Verify with HTTP check to ensure API is actually ready
+                    if self.is_roxy_instance_running():
+                        print(f"Roxy API ready after {i * 0.05:.2f}s (detected via ready file)")
+                        break
+                # Fallback to HTTP check if ready file not yet created
+                elif i % 4 == 0:  # Check HTTP every 4th iteration (every 0.2s)
+                    if self.is_roxy_instance_running():
+                        print(f"Roxy API ready after {i * 0.05:.2f}s (detected via HTTP)")
+                        break
             else:
                 print("Roxy API did not become available.")
                 return
