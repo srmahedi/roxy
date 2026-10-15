@@ -18,7 +18,7 @@ from utils.helpers import get_resource_path, set_taskbar_icon
 from ui import MainWindow
 from server import SingleInstanceManager
 
-# Ready signal file path for faster host detection
+# Ready signal file path for faster launcher detection
 ROXY_READY_FILE = os.path.join(tempfile.gettempdir(), "roxy_api_ready.txt")
 
 
@@ -106,7 +106,7 @@ def main():
     # Start listening for connections from other instances
     single_instance.listen_for_connections(window.add_download_from_api)
 
-    # Create ready signal file for faster host detection
+    # Create ready signal file for faster launcher detection
     try:
         with open(ROXY_READY_FILE, 'w') as f:
             f.write("ready")

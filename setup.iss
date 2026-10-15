@@ -48,7 +48,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "dist\Roxy\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\Roxy\_internal\*"; DestDir: "{app}/_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "dist\roxy-host.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\roxy-launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "okhttp\*"; DestDir: "{app}/okhttp"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Roxy-ext\*"; DestDir: "{userdocs}\Roxy-ext"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
@@ -61,16 +61,16 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-; Add roxy-host.exe to Windows startup using registry
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Roxy Host"; ValueData: """{app}\roxy-host.exe"""; Flags: uninsdeletevalue uninsdeletekeyifempty
+; Add roxy-launcher.exe to Windows startup using registry
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Roxy Launcher"; ValueData: """{app}\roxy-launcher.exe"""; Flags: uninsdeletevalue uninsdeletekeyifempty
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent unchecked
-Filename: "{app}\roxy-host.exe"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\roxy-launcher.exe"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-; Stop the running roxy-host.exe process before uninstall
-Filename: "taskkill.exe"; Parameters: "/F /IM roxy-host.exe"; Flags: runhidden; RunOnceId: "StopRoxyHost"
+; Stop the running roxy-launcher.exe process before uninstall
+Filename: "taskkill.exe"; Parameters: "/F /IM roxy-launcher.exe"; Flags: runhidden; RunOnceId: "StopRoxyLauncher"
 
 [UninstallDelete]
 ; Remove the Roxy-ext folder from user documents

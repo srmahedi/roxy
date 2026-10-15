@@ -64,7 +64,7 @@ python main.py
 ```
 roxy/
 ├── main.py                     # Main application entry point & single-instance lock
-├── roxy_host.py                # Companion launcher host (Port 12579)
+├── roxy_launcher.py            # Companion launcher (Port 12579)
 ├── models/
 │   ├── download_item.py        # Core download state machine & signal dispatcher
 │   └── download_table_model.py # PyQt table view model & progress delegates
@@ -102,7 +102,7 @@ roxy/
 pyinstaller --clean --noconfirm --windowed --name Roxy --icon icon.ico main.py
 
 # Build companion launcher host (optional)
-pyinstaller --clean --noconfirm --windowed --onefile --name roxy-host --icon icon.ico roxy_host.py
+pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon icon.ico roxy_launcher.py
 ```
 
 ### Inno Setup Installer
