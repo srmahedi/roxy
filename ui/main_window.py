@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         self.action_buttons = {}
 
         # Download queue for handling multiple concurrent downloads
-        self.max_concurrent_downloads = 20  # Limit concurrent downloads
+        self.max_concurrent_downloads = 3  # Limit concurrent downloads
         self.download_queue = []  # Queue of pending downloads
         self.active_downloads = 0  # Count of currently active downloads
 
@@ -138,9 +138,19 @@ class MainWindow(QMainWindow):
     def _create_action_button_for_item(self, dl):
         if dl in self.action_buttons:
             return self.action_buttons[dl]
-        
+
+        from PyQt6.QtWidgets import QWidget, QHBoxLayout
+
+        # Create container widget with layout for centering
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Create the actual button
         btn = QPushButton()
         btn.setFixedWidth(70)
+        btn.setFixedHeight(24)
         btn.setStyleSheet("""
             QPushButton {
                 background-color: #3c3c3c;
@@ -152,61 +162,76 @@ class MainWindow(QMainWindow):
             QPushButton:pressed { background-color: #2a2a2a; }
             QPushButton:disabled { background-color: #2a2a2a; }
         """)
+
+        # Update button with current status
         self._update_action_button(btn, dl)
+
+        # Connect signals to the actual button
         dl.statusChanged.connect(lambda status, b=btn, d=dl: self._update_action_button(b, d))
         btn.clicked.connect(lambda checked, d=dl: self._on_action_button_clicked(d))
-        self.action_buttons[dl] = btn
-        return btn
+
+        # Center the button in the layout
+        layout.addStretch()
+        layout.addWidget(btn)
+        layout.addStretch()
+
+        self.action_buttons[dl] = container
+        return container
 
     def _refresh_action_buttons(self):
         """Re-bind index widgets for all rows in table model."""
         current_dls = set(self.model.downloads)
         for dl in list(self.action_buttons.keys()):
             if dl not in current_dls:
-                btn = self.action_buttons.pop(dl)
-                btn.deleteLater()
+                container = self.action_buttons.pop(dl)
+                container.deleteLater()
 
         for row, dl in enumerate(self.model.downloads):
-            btn = self._create_action_button_for_item(dl)
-            self._update_action_button(btn, dl)
-            self.table.setIndexWidget(self.model.index(row, 0), btn)
+            container = self._create_action_button_for_item(dl)
+            self.table.setIndexWidget(self.model.index(row, 0), container)
 
-    def _update_action_button(self, btn, dl):
+    def _update_action_button(self, widget, dl):
         """Update button text/icon based on download status."""
         try:
-            if not btn or not hasattr(btn, 'setIcon'):
-                return
-        except:
-            return
-        
-        if dl.status == DownloadItem.STATUS_COMPLETED:
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
-            btn.setIcon(icon)
-            btn.setText("")
-            btn.setToolTip("Open containing folder")
-            if not os.path.exists(dl.save_path):
-                btn.setEnabled(False)
-                btn.setToolTip("File missing")
+            # Handle both direct button and container widget
+            if isinstance(widget, QPushButton):
+                btn = widget
             else:
+                # It's a container widget, find the button inside
+                btn = widget.findChild(QPushButton)
+                if not btn:
+                    return
+
+            if dl.status == DownloadItem.STATUS_COMPLETED:
+                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+                btn.setIcon(icon)
+                btn.setText("")
+                btn.setToolTip("Open containing folder")
+                if not os.path.exists(dl.save_path):
+                    btn.setEnabled(False)
+                    btn.setToolTip("File missing")
+                else:
+                    btn.setEnabled(True)
+            elif dl.status == DownloadItem.STATUS_DOWNLOADING:
+                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause)
+                btn.setIcon(icon)
+                btn.setText("")
+                btn.setToolTip("Pause download")
                 btn.setEnabled(True)
-        elif dl.status == DownloadItem.STATUS_DOWNLOADING:
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause)
-            btn.setIcon(icon)
-            btn.setText("")
-            btn.setToolTip("Pause download")
-            btn.setEnabled(True)
-        elif dl.status == DownloadItem.STATUS_PAUSED:
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
-            btn.setIcon(icon)
-            btn.setText("")
-            btn.setToolTip("Resume download")
-            btn.setEnabled(True)
-        else:
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
-            btn.setIcon(icon)
-            btn.setText("")
-            btn.setToolTip("Start download")
-            btn.setEnabled(True)
+            elif dl.status == DownloadItem.STATUS_PAUSED:
+                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+                btn.setIcon(icon)
+                btn.setText("")
+                btn.setToolTip("Resume download")
+                btn.setEnabled(True)
+            else:
+                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+                btn.setIcon(icon)
+                btn.setText("")
+                btn.setToolTip("Start download")
+                btn.setEnabled(True)
+        except Exception as e:
+            print(f"Error updating action button: {e}")
 
     def _on_action_button_clicked(self, dl):
         if dl.status == DownloadItem.STATUS_COMPLETED:
