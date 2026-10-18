@@ -382,8 +382,11 @@ class MainWindow(QMainWindow):
 
         # Add additional information if provided
         if additional_info:
-            if additional_info.get('referrer'):
-                dl.referrer = additional_info['referrer']
+            # Filter out invalid referers like 'about:client' that cause 403 errors
+            referrer = additional_info.get('referrer', '')
+            if referrer and referrer not in ('about:client', 'about:blank', ''):
+                dl.referrer = referrer
+            # Allow empty referrer to use auto-referer logic from download engine
             if additional_info.get('cookies'):
                 dl.cookies = additional_info['cookies']
             if additional_info.get('userAgent'):
