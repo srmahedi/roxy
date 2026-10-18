@@ -14,6 +14,7 @@ from utils.constants import DARK_QSS, MAIN_API_PORT, APP_NAME
 from utils.helpers import force_window_to_foreground, extract_filename_from_url, get_unique_filepath
 from utils.persistence import PersistenceManager
 from utils.file_monitor import DownloadFileMonitor
+from utils.download_engine import DownloadEngine, DownloadState
 from models import DownloadItem, DownloadTableModel, ProgressBarDelegate
 from ui.title_bar import TitleBar
 from ui.custom_table_view import CustomTableView
@@ -70,6 +71,14 @@ class MainWindow(QMainWindow):
         self.remove_action = QAction("Remove", self)
         self.remove_action.triggered.connect(self.remove_selected)
         toolbar.addAction(self.remove_action)
+
+        self.retry_action = QAction("Retry", self)
+        self.retry_action.triggered.connect(self.retry_selected)
+        toolbar.addAction(self.retry_action)
+
+        self.redownload_action = QAction("Redownload", self)
+        self.redownload_action.triggered.connect(self.redownload_selected)
+        toolbar.addAction(self.redownload_action)
 
         toolbar.addSeparator()
 
@@ -138,19 +147,9 @@ class MainWindow(QMainWindow):
     def _create_action_button_for_item(self, dl):
         if dl in self.action_buttons:
             return self.action_buttons[dl]
-
-        from PyQt6.QtWidgets import QWidget, QHBoxLayout
-
-        # Create container widget with layout for centering
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Create the actual button
+        
         btn = QPushButton()
         btn.setFixedWidth(70)
-        btn.setFixedHeight(24)
         btn.setStyleSheet("""
             QPushButton {
                 background-color: #3c3c3c;
@@ -162,76 +161,61 @@ class MainWindow(QMainWindow):
             QPushButton:pressed { background-color: #2a2a2a; }
             QPushButton:disabled { background-color: #2a2a2a; }
         """)
-
-        # Update button with current status
         self._update_action_button(btn, dl)
-
-        # Connect signals to the actual button
         dl.statusChanged.connect(lambda status, b=btn, d=dl: self._update_action_button(b, d))
         btn.clicked.connect(lambda checked, d=dl: self._on_action_button_clicked(d))
-
-        # Center the button in the layout
-        layout.addStretch()
-        layout.addWidget(btn)
-        layout.addStretch()
-
-        self.action_buttons[dl] = container
-        return container
+        self.action_buttons[dl] = btn
+        return btn
 
     def _refresh_action_buttons(self):
         """Re-bind index widgets for all rows in table model."""
         current_dls = set(self.model.downloads)
         for dl in list(self.action_buttons.keys()):
             if dl not in current_dls:
-                container = self.action_buttons.pop(dl)
-                container.deleteLater()
+                btn = self.action_buttons.pop(dl)
+                btn.deleteLater()
 
         for row, dl in enumerate(self.model.downloads):
-            container = self._create_action_button_for_item(dl)
-            self.table.setIndexWidget(self.model.index(row, 0), container)
+            btn = self._create_action_button_for_item(dl)
+            self._update_action_button(btn, dl)
+            self.table.setIndexWidget(self.model.index(row, 0), btn)
 
-    def _update_action_button(self, widget, dl):
+    def _update_action_button(self, btn, dl):
         """Update button text/icon based on download status."""
         try:
-            # Handle both direct button and container widget
-            if isinstance(widget, QPushButton):
-                btn = widget
+            if not btn or not hasattr(btn, 'setIcon'):
+                return
+        except:
+            return
+        
+        if dl.status == DownloadItem.STATUS_COMPLETED:
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+            btn.setIcon(icon)
+            btn.setText("")
+            btn.setToolTip("Open containing folder")
+            if not os.path.exists(dl.save_path):
+                btn.setEnabled(False)
+                btn.setToolTip("File missing")
             else:
-                # It's a container widget, find the button inside
-                btn = widget.findChild(QPushButton)
-                if not btn:
-                    return
-
-            if dl.status == DownloadItem.STATUS_COMPLETED:
-                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
-                btn.setIcon(icon)
-                btn.setText("")
-                btn.setToolTip("Open containing folder")
-                if not os.path.exists(dl.save_path):
-                    btn.setEnabled(False)
-                    btn.setToolTip("File missing")
-                else:
-                    btn.setEnabled(True)
-            elif dl.status == DownloadItem.STATUS_DOWNLOADING:
-                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause)
-                btn.setIcon(icon)
-                btn.setText("")
-                btn.setToolTip("Pause download")
                 btn.setEnabled(True)
-            elif dl.status == DownloadItem.STATUS_PAUSED:
-                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
-                btn.setIcon(icon)
-                btn.setText("")
-                btn.setToolTip("Resume download")
-                btn.setEnabled(True)
-            else:
-                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
-                btn.setIcon(icon)
-                btn.setText("")
-                btn.setToolTip("Start download")
-                btn.setEnabled(True)
-        except Exception as e:
-            print(f"Error updating action button: {e}")
+        elif dl.status == DownloadItem.STATUS_DOWNLOADING:
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause)
+            btn.setIcon(icon)
+            btn.setText("")
+            btn.setToolTip("Pause download")
+            btn.setEnabled(True)
+        elif dl.status == DownloadItem.STATUS_PAUSED:
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+            btn.setIcon(icon)
+            btn.setText("")
+            btn.setToolTip("Resume download")
+            btn.setEnabled(True)
+        else:
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+            btn.setIcon(icon)
+            btn.setText("")
+            btn.setToolTip("Start download")
+            btn.setEnabled(True)
 
     def _on_action_button_clicked(self, dl):
         if dl.status == DownloadItem.STATUS_COMPLETED:
@@ -510,6 +494,121 @@ class MainWindow(QMainWindow):
                 self.model.remove_download(row)
                 self._save_downloads()
                 self.status_bar.showMessage("Removed download", 3000)
+
+    def retry_selected(self):
+        """Retry a failed download without deleting the partially downloaded file."""
+        row = self.selected_row()
+        if row >= 0:
+            dl = self.model.get_download(row)
+            if dl and dl.status == DownloadItem.STATUS_ERROR:
+                # Reset status to paused so it can be retried
+                dl.status = DownloadItem.STATUS_PAUSED
+                dl.statusChanged.emit(dl.status)
+                # Add to queue
+                if dl not in self.download_queue:
+                    self.download_queue.append(dl)
+                self._process_download_queue()
+                self._save_downloads()
+                self.status_bar.showMessage(f"Retrying: {os.path.basename(dl.save_path)}", 3000)
+            elif dl and dl.status != DownloadItem.STATUS_ERROR:
+                self.status_bar.showMessage("Can only retry failed downloads", 3000)
+
+    def redownload_selected(self):
+        """Redownload from scratch, deleting any partially downloaded file."""
+        row = self.selected_row()
+        if row >= 0:
+            dl = self.model.get_download(row)
+            if dl:
+                # Check if file is already completely downloaded
+                if dl.status == DownloadItem.STATUS_COMPLETED and os.path.exists(dl.save_path):
+                    # Show duplicate dialog for completed files
+                    filename = os.path.basename(dl.save_path)
+                    dup_dialog = DuplicateDownloadDialog(
+                        self,
+                        filename=filename,
+                        url=dl.url,
+                        save_path=dl.save_path,
+                        is_file_duplicate=True,
+                        is_url_duplicate=False
+                    )
+
+                    if dup_dialog.exec() == QDialog.DialogCode.Accepted:
+                        if dup_dialog.action == DuplicateDownloadDialog.ACTION_RENAME:
+                            # Generate unique filename
+                            existing_paths = [d.save_path for d in self.model.downloads]
+                            new_path = get_unique_filepath(dl.save_path, existing_paths=existing_paths)
+                            # Update the download item with new path
+                            dl.save_path = new_path
+                            # Stop and reset for new download
+                            dl.stop()
+                            try:
+                                if os.path.exists(dl.save_path):
+                                    os.remove(dl.save_path)
+                                if hasattr(dl.download_engine, 'temp_file') and dl.download_engine.temp_file and os.path.exists(dl.download_engine.temp_file):
+                                    os.remove(dl.download_engine.temp_file)
+                            except Exception as e:
+                                print(f"Error deleting files for redownload: {e}")
+                            # Reset state
+                            dl.downloaded_bytes = 0
+                            dl.total_bytes = -1
+                            dl.status = DownloadItem.STATUS_PENDING
+                            dl.error_message = ""
+                            dl.retry_count = 0
+                            if dl.download_engine:
+                                dl.download_engine.downloaded_bytes = 0
+                                dl.download_engine.file_size = 0
+                                dl.download_engine.state = DownloadState.STOPPED
+                            # Add to queue
+                            if dl not in self.download_queue:
+                                self.download_queue.append(dl)
+                            self._process_download_queue()
+                            self._save_downloads()
+                            self.status_bar.showMessage(f"Redownloading as: {os.path.basename(dl.save_path)}", 3000)
+                            return
+                        elif dup_dialog.action == DuplicateDownloadDialog.ACTION_OVERWRITE:
+                            # Proceed with overwrite (continue to normal redownload logic)
+                            pass
+                        else:
+                            # Cancel - don't redownload
+                            self.status_bar.showMessage("Redownload cancelled", 3000)
+                            return
+                    else:
+                        # Dialog rejected - don't redownload
+                        self.status_bar.showMessage("Redownload cancelled", 3000)
+                        return
+
+                # Normal redownload logic (for incomplete files or after overwrite confirmation)
+                # Stop current download if running
+                dl.stop()
+
+                # Delete partial files
+                try:
+                    if os.path.exists(dl.save_path):
+                        os.remove(dl.save_path)
+                    if hasattr(dl.download_engine, 'temp_file') and dl.download_engine.temp_file and os.path.exists(dl.download_engine.temp_file):
+                        os.remove(dl.download_engine.temp_file)
+                except Exception as e:
+                    print(f"Error deleting files for redownload: {e}")
+
+                # Reset download state
+                dl.downloaded_bytes = 0
+                dl.total_bytes = -1
+                dl.status = DownloadItem.STATUS_PENDING
+                dl.error_message = ""
+                dl.retry_count = 0
+
+                # Reset engine state
+                if dl.download_engine:
+                    dl.download_engine.downloaded_bytes = 0
+                    dl.download_engine.file_size = 0
+                    dl.download_engine.state = DownloadState.STOPPED
+
+                # Add to queue
+                if dl not in self.download_queue:
+                    self.download_queue.append(dl)
+                self._process_download_queue()
+                self._save_downloads()
+                self.status_bar.showMessage(f"Redownloading: {os.path.basename(dl.save_path)}", 3000)
 
     def start_all(self):
         for dl in self.model.downloads:
