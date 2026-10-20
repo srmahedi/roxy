@@ -11,10 +11,13 @@ import time
 import queue
 import hashlib
 import glob
+import json
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, Callable, List, Dict, Any
 from urllib.parse import urlparse
+
+from utils.constants import TEMP_DOWNLOAD_DIR
 
 # Try to initialize OkHttp with JPype, fallback to requests if not available
 USE_OKHTTP = False
@@ -174,6 +177,85 @@ class DownloadEngine:
         # Retry configuration
         self.max_retries: int = 3
         self.retry_delay: int = 5
+
+    @property
+    def meta_file(self) -> str:
+        """Path to metadata file storing section progress and download state."""
+        if not self.temp_file:
+            return ""
+        # Use a hash of the output file path to create a unique filename in temp directory
+        file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
+        meta_filename = f"{file_hash}.meta"
+        return os.path.join(TEMP_DOWNLOAD_DIR, meta_filename)
+
+    def _save_meta_state(self):
+        """Save section progress and download metadata to disk atomically."""
+        if not self.temp_file or not self.sections:
+            return
+
+        meta_path = self.meta_file
+        tmp_meta_path = f"{meta_path}.tmp"
+
+        try:
+            with self.lock:
+                sections_data = [
+                    {
+                        'section_id': s.section_id,
+                        'start': s.start,
+                        'end': s.end,
+                        'current': s.current,
+                        'done': s.state == SectionState.DONE or (s.end > 0 and s.current >= s.end + 1)
+                    }
+                    for s in self.sections
+                ]
+                meta_data = {
+                    'url': self.url,
+                    'file_size': self.file_size,
+                    'downloaded_bytes': self.downloaded_bytes,
+                    'resume_supported': self.resume_supported,
+                    'fallback_to_single_thread': self.fallback_to_single_thread,
+                    'sections': sections_data,
+                    'updated_at': time.time()
+                }
+
+            out_dir = os.path.dirname(meta_path)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+
+            with open(tmp_meta_path, 'w', encoding='utf-8') as f:
+                json.dump(meta_data, f, indent=2)
+
+            os.replace(tmp_meta_path, meta_path)
+        except Exception:
+            if os.path.exists(tmp_meta_path):
+                try:
+                    os.remove(tmp_meta_path)
+                except Exception:
+                    pass
+
+    def _remove_meta_file(self):
+        """Delete metadata file if it exists."""
+        if self.meta_file and os.path.exists(self.meta_file):
+            try:
+                os.remove(self.meta_file)
+            except Exception:
+                pass
+
+    def delete_temp_files(self):
+        """Safely close file handles and delete temp file and meta file."""
+        self._remove_meta_file()
+        with self.file_lock:
+            if self.file_handle:
+                try:
+                    self.file_handle.close()
+                except Exception:
+                    pass
+                self.file_handle = None
+        if self.temp_file and os.path.exists(self.temp_file):
+            try:
+                os.remove(self.temp_file)
+            except Exception as e:
+                print(f"Could not remove temp file: {e}")
 
     # ---------------------------------------------------------------------------
     # Known CDN / vendor download portals that gate downloads behind a Referer.
@@ -347,7 +429,9 @@ class DownloadEngine:
                                 if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
                                     dir_name = os.path.dirname(self.output_file) if self.output_file else ""
                                     self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
-                                    self.temp_file = f"{self.output_file}.temp"
+                                    # Update temp_file path with new output_file
+                                    file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
+                                    self.temp_file = os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.temp")
 
                     response.close()
                     
@@ -415,7 +499,9 @@ class DownloadEngine:
                                 if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
                                     dir_name = os.path.dirname(self.output_file) if self.output_file else ""
                                     self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
-                                    self.temp_file = f"{self.output_file}.temp"
+                                    # Update temp_file path with new output_file
+                                    file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
+                                    self.temp_file = os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.temp")
 
                     if hasattr(response, 'close'):
                         response.close()
@@ -436,7 +522,11 @@ class DownloadEngine:
         """Initialize download with URL and output file"""
         self.url = url
         self.output_file = output_file or self._extract_filename(url)
-        self.temp_file = f"{self.output_file}.temp"
+        
+        # Create temp file path in TEMP_DOWNLOAD_DIR using hash of output path
+        file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
+        os.makedirs(TEMP_DOWNLOAD_DIR, exist_ok=True)
+        self.temp_file = os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.temp")
         
         # Reset state
         self.downloaded_bytes = 0
@@ -448,11 +538,11 @@ class DownloadEngine:
         # Query file information (ignore return status, continue even if server blocks HEAD/GET)
         self.query_file_info()
         
-        # Check for existing temp file (resume)
+        # Check for existing temp file and metadata (resume)
         if os.path.exists(self.temp_file):
             self._load_resume_state()
         
-        # Create download sections
+        # Create download sections (only if not restored from metadata)
         self._create_sections()
         
         return True
@@ -465,8 +555,12 @@ class DownloadEngine:
     
     def _create_sections(self):
         """Create download sections based on file size and configuration"""
+        # If sections were already restored from valid resume metadata, preserve them
+        if self.sections:
+            return
+
         self.sections.clear()
-        
+
         # Auto-detect Google Drive URLs (which do not support multi-threaded Range requests)
         if self.url and ('googleusercontent.com' in self.url.lower() or 'drive.google.com' in self.url.lower()):
             self.fallback_to_single_thread = True
@@ -474,13 +568,16 @@ class DownloadEngine:
         # If fallback is enabled, size is unknown, or resume is not supported, create a single section
         if self.fallback_to_single_thread or self.file_size <= 0 or not self.resume_supported:
             end_pos = self.file_size - 1 if self.file_size > 0 else -1
+            current_pos = min(self.downloaded_bytes, max(0, self.file_size - 1)) if (self.file_size > 0 and self.resume_supported) else 0
             section = DownloadSection(
                 section_id=0,
                 start=0,
                 end=end_pos,
-                current=min(self.downloaded_bytes, max(0, self.file_size - 1)) if self.file_size > 0 else self.downloaded_bytes
+                current=current_pos,
+                state=SectionState.STOPPED
             )
             self.sections.append(section)
+            self._save_meta_state()
             return
 
         # Calculate section size
@@ -494,44 +591,113 @@ class DownloadEngine:
                 section_id=0,
                 start=0,
                 end=self.file_size - 1,
-                current=min(self.downloaded_bytes, self.file_size - 1)
+                current=0,
+                state=SectionState.STOPPED
             )
             self.sections.append(section)
+            self._save_meta_state()
             return
 
         section_size = self.file_size // num_sections
         for i in range(num_sections):
             start_pos = i * section_size
             end_pos = self.file_size - 1 if i == num_sections - 1 else (i + 1) * section_size - 1
-            
-            state = SectionState.STOPPED
-            current_pos = start_pos
-            if self.downloaded_bytes >= end_pos + 1:
-                current_pos = end_pos + 1
-                state = SectionState.DONE
-            elif self.downloaded_bytes > start_pos:
-                current_pos = self.downloaded_bytes
 
             section = DownloadSection(
                 section_id=i,
                 start=start_pos,
                 end=end_pos,
-                current=current_pos,
-                state=state
+                current=start_pos,
+                state=SectionState.STOPPED
             )
             self.sections.append(section)
 
-    def _load_resume_state(self):
-        """Load resume state from temp file"""
-        try:
+        self.downloaded_bytes = 0
+        self._save_meta_state()
+
+    def _load_resume_state(self) -> bool:
+        """Load resume state from meta file, verifying integrity against server info"""
+        meta_path = self.meta_file
+        if not os.path.exists(meta_path):
+            # No meta file exists.
+            # Multi-threaded downloads write via seek() at multiple offsets, causing os.path.getsize()
+            # to reflect the highest offset rather than contiguous downloaded bytes!
+            # Resuming without metadata would skip unwritten ranges and corrupt the file.
             if os.path.exists(self.temp_file):
-                self.downloaded_bytes = os.path.getsize(self.temp_file)
-                self._emit_event('resume_loaded', {
-                    'downloaded_bytes': self.downloaded_bytes
-                })
+                print(f"WARNING: Temp file exists ({self.temp_file}) without metadata. Starting fresh to prevent file corruption.")
+                self.delete_temp_files()
+            self.downloaded_bytes = 0
+            self.sections.clear()
+            return False
+
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+
+            # Validate URL
+            meta_url = meta.get('url', '')
+            if meta_url and self.url:
+                parsed_saved = urlparse(meta_url)
+                parsed_cur = urlparse(self.url)
+                if parsed_saved.netloc != parsed_cur.netloc or parsed_saved.path != parsed_cur.path:
+                    print("Saved metadata URL path does not match current URL. Starting fresh.")
+                    self.delete_temp_files()
+                    self.downloaded_bytes = 0
+                    self.sections.clear()
+                    return False
+
+            # Validate file size if server returned file size
+            meta_file_size = meta.get('file_size', 0)
+            if self.file_size > 0 and meta_file_size > 0 and self.file_size != meta_file_size:
+                print(f"Remote file size changed ({meta_file_size} -> {self.file_size}). Discarding old resume state.")
+                self.delete_temp_files()
+                self.downloaded_bytes = 0
+                self.sections.clear()
+                return False
+
+            if self.file_size <= 0 and meta_file_size > 0:
+                self.file_size = meta_file_size
+
+            saved_sections = meta.get('sections', [])
+            if not saved_sections:
+                return False
+
+            self.sections.clear()
+            for s_data in saved_sections:
+                s_id = s_data['section_id']
+                s_start = s_data['start']
+                s_end = s_data['end']
+                s_cur = s_data.get('current', s_start)
+                s_done = s_data.get('done', False) or (s_end > 0 and s_cur >= s_end + 1)
+
+                sec = DownloadSection(
+                    section_id=s_id,
+                    start=s_start,
+                    end=s_end,
+                    current=s_cur,
+                    state=SectionState.DONE if s_done else SectionState.STOPPED
+                )
+                self.sections.append(sec)
+
+            self.fallback_to_single_thread = meta.get('fallback_to_single_thread', self.fallback_to_single_thread)
+            self.downloaded_bytes = sum(max(0, s.current - s.start) for s in self.sections)
+            if self.file_size > 0:
+                self.downloaded_bytes = min(self.file_size, self.downloaded_bytes)
+
+            print(f"Successfully restored resume state: {self.downloaded_bytes}/{self.file_size} bytes across {len(self.sections)} sections")
+            self._emit_event('resume_loaded', {
+                'downloaded_bytes': self.downloaded_bytes,
+                'file_size': self.file_size,
+                'sections_count': len(self.sections)
+            })
+            return True
+
         except Exception as e:
-            self._emit_event('error', {'message': f'Failed to load resume state: {str(e)}'})
-    
+            print(f"ERROR reading resume metadata: {e}")
+            self.downloaded_bytes = 0
+            self.sections.clear()
+            return False
+
     def start_download(self) -> bool:
         """Start the download process"""
         if self.state == DownloadState.DOWNLOADING:
@@ -546,9 +712,6 @@ class DownloadEngine:
         
         # Open output file for random-access binary read/write ('r+b' if exists, 'w+b' otherwise)
         try:
-            out_dir = os.path.dirname(self.temp_file)
-            if out_dir:
-                os.makedirs(out_dir, exist_ok=True)
             if os.path.exists(self.temp_file):
                 self.file_handle = open(self.temp_file, 'r+b')
             else:
@@ -559,31 +722,64 @@ class DownloadEngine:
         
         # Update state
         self.state = DownloadState.DOWNLOADING
+        self.stop_event.clear()
         self._emit_event('download_started', {'url': self.url})
-        
-        # Start download threads for each section
-        for section in self.sections:
-            if section.state != SectionState.DONE:
-                section.state = SectionState.DOWNLOADING
-                thread = threading.Thread(
-                    target=self._download_section,
-                    args=(section,),
-                    daemon=True
-                )
-                section.thread = thread
-                thread.start()
-                self.download_threads.append(thread)
+        self._save_meta_state()
+
+        # Determine number of worker threads
+        if self.fallback_to_single_thread:
+            num_workers = 1
+        else:
+            num_workers = min(len(self.sections), self.max_sections) if self.sections else 1
+
+        self.download_threads.clear()
+
+        # Start worker threads
+        for i in range(num_workers):
+            thread = threading.Thread(
+                target=self._worker_loop,
+                daemon=True,
+                name=f"DownloadWorker-{i}"
+            )
+            thread.start()
+            self.download_threads.append(thread)
         
         # Start progress monitoring thread
         monitor_thread = threading.Thread(
             target=self._monitor_progress,
-            daemon=True
+            daemon=True,
+            name="ProgressMonitor"
         )
         monitor_thread.start()
         self.download_threads.append(monitor_thread)
         
         return True
-    
+
+    def _worker_loop(self):
+        """Worker loop to process unfinished download sections sequentially or in parallel"""
+        while not self.stop_event.is_set():
+            section_to_download = None
+            with self.lock:
+                for s in self.sections:
+                    if s.state in (SectionState.STOPPED, SectionState.ERROR):
+                        if s.end > 0 and s.current >= s.end + 1:
+                            s.state = SectionState.DONE
+                        else:
+                            s.state = SectionState.DOWNLOADING
+                            section_to_download = s
+                            break
+
+            if not section_to_download:
+                break
+
+            url = self._get_current_url()
+            if USE_OKHTTP:
+                self._download_section_okhttp(section_to_download, url)
+            else:
+                self._download_section_requests(section_to_download, url)
+
+            self._check_completion()
+
     def _download_section(self, section: DownloadSection):
         """Download a specific section"""
         url = self._get_current_url()
@@ -598,8 +794,14 @@ class DownloadEngine:
     
     def _download_section_okhttp(self, section: DownloadSection, url: str):
         """Download a specific section using OkHttp"""
+        retry_count = 0
         while not self.stop_event.is_set() and section.state != SectionState.DONE:
             try:
+                # If section is already completed, mark DONE and exit
+                if section.end > 0 and section.current >= section.end + 1:
+                    section.state = SectionState.DONE
+                    return
+
                 # Prepare request builder
                 request_builder = Request.Builder().url(url)
                 
@@ -607,11 +809,11 @@ class DownloadEngine:
                 for key, value in self.headers.items():
                     request_builder.addHeader(key, value)
                 
-                # Only use Range headers if not in fallback mode and resume is supported
-                if not self.fallback_to_single_thread and self.resume_supported:
+                # Use Range header if resume is supported and not starting from 0 to end of file
+                if self.resume_supported and (section.start > 0 or section.current > 0 or section.end > 0):
                     if section.end > 0:
                         request_builder.addHeader("Range", f'bytes={section.current}-{section.end}')
-                    elif section.current > 0 and section.end != 0:
+                    elif section.current > 0:
                         request_builder.addHeader("Range", f'bytes={section.current}-')
                 
                 request = request_builder.build()
@@ -656,19 +858,29 @@ class DownloadEngine:
                 # Check if range request was sent but server returned 200 OK (ignored Range)
                 range_header = request.header("Range")
                 if range_header and response.code() == 200:
+                    body = response.body()
                     if section.section_id != 0:
-                        section.state = SectionState.DONE
+                        section.state = SectionState.STOPPED
                         body.close()
                         response.close()
                         return
                     else:
                         with self.lock:
                             self.resume_supported = False
+                            self.fallback_to_single_thread = True
                             for s in self.sections:
                                 if s.section_id != 0:
-                                    s.state = SectionState.DONE
+                                    s.state = SectionState.STOPPED
+                            section.start = 0
+                            section.current = 0
                             if section.end > 0 and self.file_size > 0:
                                 section.end = self.file_size - 1
+                        with self.file_lock:
+                            if self.file_handle and not self.file_handle.closed:
+                                self.file_handle.seek(0)
+                                self.file_handle.truncate(0)
+                        self.downloaded_bytes = 0
+                        self._save_meta_state()
                 
                 # Update section end and file size if unknown
                 content_length = response.header('content-length')
@@ -734,6 +946,8 @@ class DownloadEngine:
                             else:
                                 self.downloaded_bytes = calculated_bytes
 
+                    retry_count = 0
+
                     if section.end > 0 and section.current >= section.end + 1:
                         break
                 
@@ -742,62 +956,65 @@ class DownloadEngine:
                 
                 # Section completed
                 if not self.stop_event.is_set():
-                    if (section.end > 0 and section.current >= section.end + 1) or section.end <= 0:
+                    if (section.end > 0 and section.current >= section.end + 1) or (section.end <= 0 and response.code() == 200):
                         section.state = SectionState.DONE
+                        self._save_meta_state()
                         self._emit_event('section_done', {
                             'section_id': section.section_id,
                             'bytes_downloaded': section.current - section.start
                         })
+                        return
                 
             except Exception as e:
                 if self.stop_event.is_set():
                     section.state = SectionState.STOPPED
+                    return
                 else:
-                    section.state = SectionState.ERROR
                     section.last_error = str(e)
+                    print(f"DEBUG: OkHttp Section {section.section_id} error: {e}")
+
+                    # Try next mirror if available
+                    if self._try_next_mirror():
+                        continue
+
+                    # Transient retry
+                    retry_count += 1
+                    if retry_count <= self.max_retries and not self.stop_event.is_set():
+                        print(f"Retrying section {section.section_id} ({retry_count}/{self.max_retries}) in {self.retry_delay}s...")
+                        time.sleep(self.retry_delay)
+                        continue
+
+                    section.state = SectionState.ERROR
+                    self._save_meta_state()
+                    with self.lock:
+                        self.state = DownloadState.ERROR
+                        self.stop_event.set()
                     self._emit_event('section_error', {
                         'section_id': section.section_id,
                         'error': str(e)
                     })
-                    
-                    # Check if multiple sections are failing - trigger fallback to single-threaded mode
-                    if not self.fallback_to_single_thread and len(self.sections) > 1:
-                        error_count = sum(1 for s in self.sections if s.state == SectionState.ERROR)
-                        if error_count >= 2:  # If 2 or more sections fail, switch to single-threaded
-                            with self.lock:
-                                self.fallback_to_single_thread = True
-                                self.stop_event.set()
-                                self._emit_event('error', {
-                                    'message': 'Server does not support multi-threaded downloads. Retrying in single-threaded mode...'
-                                })
-                            return  # Exit early to avoid normal retry logic
-                    
-                    # Retry logic
-                    if not self.stop_event.is_set():
-                        time.sleep(self.retry_delay)
-                        # Try next mirror if available
-                        if self._try_next_mirror():
-                            continue
-                        else:
-                            with self.lock:
-                                self.state = DownloadState.ERROR
-                                self.stop_event.set()
-                            self._emit_event('error', {'message': str(e)})
-                            return
+                    self._emit_event('error', {'message': f'Network error: {str(e)}'})
+                    return
     
     def _download_section_requests(self, section: DownloadSection, url: str):
         """Download a specific section using requests (fallback)"""
+        retry_count = 0
         while not self.stop_event.is_set() and section.state != SectionState.DONE:
             try:
+                # If section is already completed, mark DONE and exit
+                if section.end > 0 and section.current >= section.end + 1:
+                    section.state = SectionState.DONE
+                    return
+
                 # Prepare headers for range request
                 headers = self.headers.copy()  # Include stored headers (cookies, referrer, etc.)
-                # Disable compression to avoid gzip decompression issues with range requests
                 headers['Accept-Encoding'] = 'identity'
-                # Only use Range headers if not in fallback mode and resume is supported
-                if not self.fallback_to_single_thread and self.resume_supported:
+                
+                # Use Range header if resume is supported and not starting from 0 to end of file
+                if self.resume_supported and (section.start > 0 or section.current > 0 or section.end > 0):
                     if section.end > 0:
                         headers['Range'] = f'bytes={section.current}-{section.end}'
-                    elif section.current > 0 and section.end != 0:
+                    elif section.current > 0:
                         headers['Range'] = f'bytes={section.current}-'
                 
                 # Make request
@@ -841,16 +1058,26 @@ class DownloadEngine:
                 # Check if range request was sent but server returned 200 OK (ignored Range)
                 if 'Range' in headers and response.status_code == 200:
                     if section.section_id != 0:
-                        section.state = SectionState.DONE
+                        section.state = SectionState.STOPPED
+                        response.close()
                         return
                     else:
                         with self.lock:
                             self.resume_supported = False
+                            self.fallback_to_single_thread = True
                             for s in self.sections:
                                 if s.section_id != 0:
-                                    s.state = SectionState.DONE
+                                    s.state = SectionState.STOPPED
+                            section.start = 0
+                            section.current = 0
                             if section.end > 0 and self.file_size > 0:
                                 section.end = self.file_size - 1
+                        with self.file_lock:
+                            if self.file_handle and not self.file_handle.closed:
+                                self.file_handle.seek(0)
+                                self.file_handle.truncate(0)
+                        self.downloaded_bytes = 0
+                        self._save_meta_state()
                 
                 # Update section end and file size if unknown
                 content_length = response.headers.get('content-length')
@@ -909,53 +1136,54 @@ class DownloadEngine:
                                 else:
                                     self.downloaded_bytes = calculated_bytes
 
+                        retry_count = 0
+
                         if section.end > 0 and section.current >= section.end + 1:
                             break
                 
+                response.close()
+
                 # Section completed
                 if not self.stop_event.is_set():
-                    if (section.end > 0 and section.current >= section.end + 1) or section.end <= 0:
+                    if (section.end > 0 and section.current >= section.end + 1) or (section.end <= 0 and response.status_code == 200):
                         section.state = SectionState.DONE
+                        self._save_meta_state()
                         self._emit_event('section_done', {
                             'section_id': section.section_id,
                             'bytes_downloaded': section.current - section.start
                         })
-                
+                        return
+
             except Exception as e:
                 if self.stop_event.is_set():
                     section.state = SectionState.STOPPED
+                    return
                 else:
-                    section.state = SectionState.ERROR
                     section.last_error = str(e)
+                    print(f"DEBUG: Requests Section {section.section_id} error: {e}")
+
+                    # Try next mirror if available
+                    if self._try_next_mirror():
+                        continue
+
+                    # Transient retry
+                    retry_count += 1
+                    if retry_count <= self.max_retries and not self.stop_event.is_set():
+                        print(f"Retrying section {section.section_id} ({retry_count}/{self.max_retries}) in {self.retry_delay}s...")
+                        time.sleep(self.retry_delay)
+                        continue
+
+                    section.state = SectionState.ERROR
+                    self._save_meta_state()
+                    with self.lock:
+                        self.state = DownloadState.ERROR
+                        self.stop_event.set()
                     self._emit_event('section_error', {
                         'section_id': section.section_id,
                         'error': str(e)
                     })
-                    
-                    # Check if multiple sections are failing - trigger fallback to single-threaded mode
-                    if not self.fallback_to_single_thread and len(self.sections) > 1:
-                        error_count = sum(1 for s in self.sections if s.state == SectionState.ERROR)
-                        if error_count >= 2:  # If 2 or more sections fail, switch to single-threaded
-                            with self.lock:
-                                self.fallback_to_single_thread = True
-                                self.stop_event.set()
-                                self._emit_event('error', {
-                                    'message': 'Server does not support multi-threaded downloads. Retrying in single-threaded mode...'
-                                })
-                            return  # Exit early to avoid normal retry logic
-                    
-                    # Retry logic
-                    if not self.stop_event.is_set():
-                        time.sleep(self.retry_delay)
-                        # Try next mirror if available
-                        if self._try_next_mirror():
-                            continue
-                        else:
-                            with self.lock:
-                                self.state = DownloadState.ERROR
-                                self.stop_event.set()
-                            self._emit_event('error', {'message': str(e)})
-                            return
+                    self._emit_event('error', {'message': f'Network error: {str(e)}'})
+                    return
     
     def _get_current_url(self) -> str:
         """Get current URL to download from (main or mirror)"""
@@ -996,6 +1224,7 @@ class DownloadEngine:
         """Monitor download progress and emit callbacks"""
         last_time = time.time()
         last_bytes = self.downloaded_bytes
+        last_save_time = time.time()
         
         while not self.stop_event.is_set() and self.state == DownloadState.DOWNLOADING:
             time.sleep(0.5)  # Update every 500ms
@@ -1019,6 +1248,11 @@ class DownloadEngine:
             if self.file_size > 0:
                 progress = (self.downloaded_bytes / self.file_size) * 100
             
+            # Periodically save meta state (every 2 seconds)
+            if now - last_save_time >= 2.0:
+                self._save_meta_state()
+                last_save_time = now
+
             # Emit progress callback
             if self.progress_callback:
                 self.progress_callback({
@@ -1031,13 +1265,29 @@ class DownloadEngine:
     def _check_completion(self):
         """Check if all sections are completed"""
         with self.lock:
-            all_done = all(section.state == SectionState.DONE for section in self.sections)
-            
+            if not self.sections or self.state != DownloadState.DOWNLOADING:
+                return
+
+            all_done = True
+            for section in self.sections:
+                if section.state != SectionState.DONE:
+                    if section.end > 0 and section.current >= section.end + 1:
+                        section.state = SectionState.DONE
+                    else:
+                        all_done = False
+                        break
+
+            # If total file size is known, verify that the sum of downloaded bytes equals or exceeds file_size
+            if all_done and self.file_size > 0:
+                total_downloaded = sum(max(0, s.current - s.start) for s in self.sections)
+                if total_downloaded < self.file_size:
+                    all_done = False
+
             if all_done and self.state == DownloadState.DOWNLOADING:
                 self._finalize_download()
     
     def _finalize_download(self):
-        """Finalize the download"""
+        """Finalize the download by moving temp file to final location"""
         try:
             self.stop_event.set()
 
@@ -1051,7 +1301,7 @@ class DownloadEngine:
                         print(f"WARNING: Error closing file handle: {e}")
                     self.file_handle = None
 
-            # Safe atomic replace with retry loop for Windows
+            # Move temp file from TEMP_DOWNLOAD_DIR to final output location
             if os.path.exists(self.temp_file):
                 out_dir = os.path.dirname(self.output_file)
                 if out_dir:
@@ -1068,9 +1318,10 @@ class DownloadEngine:
                                 print(f"Removed existing target file: {self.output_file}")
                             except Exception as e:
                                 print(f"WARNING: Could not remove target file: {e}")
+                        # Move temp file to final location
                         os.replace(self.temp_file, self.output_file)
                         replaced = True
-                        print(f"Successfully finalized download: {self.output_file}")
+                        print(f"Successfully moved download from temp to: {self.output_file}")
                         break
                     except Exception as err:
                         last_err = err
@@ -1101,7 +1352,6 @@ class DownloadEngine:
                             print(f"Successfully finalized download using rename fallback: {self.output_file}")
                         except Exception as rename_err:
                             print(f"ERROR: All finalize attempts failed. Last error: {rename_err}")
-                            # Don't raise error here - preserve the temp file for manual recovery
                             self._emit_event('error', {
                                 'message': f'Failed to finalize download but data preserved in temp file: {self.temp_file}'
                             })
@@ -1113,6 +1363,9 @@ class DownloadEngine:
                 self.downloaded_bytes = actual_size
                 if self.file_size <= 0:
                     self.file_size = actual_size
+
+            # Clean up metadata file on successful finalization
+            self._remove_meta_file()
 
             # Update state
             self.state = DownloadState.DONE
@@ -1132,6 +1385,11 @@ class DownloadEngine:
         if self.state == DownloadState.DOWNLOADING:
             self.state = DownloadState.PAUSED
             self.stop_event.set()
+            with self.lock:
+                for s in self.sections:
+                    if s.state == SectionState.DOWNLOADING:
+                        s.state = SectionState.STOPPED
+            self._save_meta_state()
             self._emit_event('download_paused', {})
     
     def resume_download(self) -> bool:
@@ -1158,6 +1416,12 @@ class DownloadEngine:
                 except Exception:
                     pass
                 self.file_handle = None
+
+        with self.lock:
+            for s in self.sections:
+                if s.state == SectionState.DOWNLOADING:
+                    s.state = SectionState.STOPPED
+        self._save_meta_state()
 
         if self.state in [DownloadState.DOWNLOADING, DownloadState.PAUSED]:
             self.state = DownloadState.STOPPED
@@ -1215,26 +1479,15 @@ class DownloadEngine:
         self.stop_download()
         
         if USE_OKHTTP and self.client:
-            self.client.dispatcher().executorService().shutdown()
-            self.client.connectionPool().evictAll()
+            try:
+                self.client.dispatcher().executorService().shutdown()
+                self.client.connectionPool().evictAll()
+            except Exception:
+                pass
             self.client = None
         elif not USE_OKHTTP and self.session:
-            self.session.close()
-            self.session = None
-        
-        # Clean up temp file if download failed, but preserve it if we have significant data
-        # This prevents losing downloaded data on finalization errors
-        if self.state != DownloadState.DONE and os.path.exists(self.temp_file):
             try:
-                # Only delete temp file if it's very small (likely corrupted or empty)
-                temp_size = os.path.getsize(self.temp_file)
-                if temp_size < 1024:  # Less than 1KB
-                    os.remove(self.temp_file)
-                else:
-                    # Preserve temp file with a different name for manual recovery
-                    import time
-                    recovery_path = f"{self.temp_file}.recovery_{int(time.time())}"
-                    os.rename(self.temp_file, recovery_path)
-                    print(f"Temp file preserved for recovery: {recovery_path}")
-            except Exception as e:
-                print(f"Could not clean up temp file: {e}")
+                self.session.close()
+            except Exception:
+                pass
+            self.session = None

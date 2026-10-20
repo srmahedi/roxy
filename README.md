@@ -101,7 +101,7 @@ roxy/
 # Build main application executable
 pyinstaller --clean --noconfirm --windowed --name Roxy --icon icon.ico main.py
 
-# Build companion launcher host (optional)
+# Build companion launcher
 pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon icon.ico roxy_launcher.py
 ```
 

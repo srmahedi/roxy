@@ -18,6 +18,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from utils.download_engine import DownloadState, DownloadEvent
+from utils.constants import TEMP_DOWNLOAD_DIR
 
 
 @dataclass
@@ -100,7 +101,11 @@ class HLSEngine:
             output_file += ".mp4"
 
         self.output_file = output_file
-        self.temp_dir = f"{self.output_file}.hls_tmp"
+        # Create temp directory in TEMP_DOWNLOAD_DIR using hash of output path
+        import hashlib
+        file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
+        os.makedirs(TEMP_DOWNLOAD_DIR, exist_ok=True)
+        self.temp_dir = os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.hls_tmp")
         os.makedirs(self.temp_dir, exist_ok=True)
 
         self.downloaded_bytes = 0
@@ -379,6 +384,11 @@ class HLSEngine:
                         with open(seg.file_path, "rb") as infile:
                             shutil.copyfileobj(infile, outfile)
 
+            out_dir = os.path.dirname(self.output_file)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+
+            # Ensure output directory exists
             out_dir = os.path.dirname(self.output_file)
             if out_dir:
                 os.makedirs(out_dir, exist_ok=True)

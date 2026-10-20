@@ -544,7 +544,9 @@ class MainWindow(QMainWindow):
                             try:
                                 if os.path.exists(dl.save_path):
                                     os.remove(dl.save_path)
-                                if hasattr(dl.download_engine, 'temp_file') and dl.download_engine.temp_file and os.path.exists(dl.download_engine.temp_file):
+                                if hasattr(dl.download_engine, 'delete_temp_files'):
+                                    dl.download_engine.delete_temp_files()
+                                elif hasattr(dl.download_engine, 'temp_file') and dl.download_engine.temp_file and os.path.exists(dl.download_engine.temp_file):
                                     os.remove(dl.download_engine.temp_file)
                             except Exception as e:
                                 print(f"Error deleting files for redownload: {e}")
@@ -585,7 +587,9 @@ class MainWindow(QMainWindow):
                 try:
                     if os.path.exists(dl.save_path):
                         os.remove(dl.save_path)
-                    if hasattr(dl.download_engine, 'temp_file') and dl.download_engine.temp_file and os.path.exists(dl.download_engine.temp_file):
+                    if hasattr(dl.download_engine, 'delete_temp_files'):
+                        dl.download_engine.delete_temp_files()
+                    elif hasattr(dl.download_engine, 'temp_file') and dl.download_engine.temp_file and os.path.exists(dl.download_engine.temp_file):
                         os.remove(dl.download_engine.temp_file)
                 except Exception as e:
                     print(f"Error deleting files for redownload: {e}")

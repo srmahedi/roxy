@@ -127,3 +127,7 @@ SINGLE_INSTANCE_PORT = 12581
 APP_NAME = "Roxy Download Manager"
 APP_ORG_NAME = "Roxy"
 APP_ID = "Roxy.DownloadManager"
+
+# Download temp directory
+import os
+TEMP_DOWNLOAD_DIR = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'Roxy_Download_Manager')

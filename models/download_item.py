@@ -140,48 +140,8 @@ class DownloadItem(QObject):
             print(f"Download URL: {self.url}")
             print(f"Save path: {self.save_path}")
             
-            # Check if this is a fallback request (multi-threaded download failed or range error)
-            is_fallback_already = getattr(self.download_engine, 'fallback_to_single_thread', False)
-            if not is_fallback_already and self.retry_count < self.max_retries:
-                print(f"Retrying download in single-threaded mode...")
-                self.retry_count += 1
-                self.status = self.STATUS_PAUSED
-                self.statusChanged.emit(self.status)
-                
-                # Clean up and retry with single-threaded mode
-                if self.download_engine:
-                    try:
-                        self.download_engine.stop_download()
-                        # Delete temp file to start fresh
-                        if hasattr(self.download_engine, 'temp_file') and self.download_engine.temp_file and os.path.exists(self.download_engine.temp_file):
-                            os.remove(self.download_engine.temp_file)
-                        self.download_engine.cleanup()
-                    except Exception:
-                        pass
-                
-                # Recreate engine with fallback enabled
-                if self._is_hls_url(self.url):
-                    self.download_engine = HLSEngine()
-                else:
-                    self.download_engine = DownloadEngine()
-                    self.download_engine.fallback_to_single_thread = True
-                
-                self.download_engine.set_event_callback(self._on_download_event)
-                self.download_engine.set_progress_callback(self._on_download_progress)
-                
-                # Configure and retry
-                self._configure_engine()
-                if self.download_engine.initialize_download(self.url, self.save_path):
-                    self.total_bytes = self.download_engine.file_size
-                    self.downloaded_bytes = self.download_engine.downloaded_bytes
-                    if hasattr(self.download_engine, 'output_file') and self.download_engine.output_file:
-                        self.save_path = self.download_engine.output_file
-                    if self.download_engine.start_download():
-                        self.status = self.STATUS_DOWNLOADING
-                        self.statusChanged.emit(self.status)
-                        return
-            
-            # Normal error handling
+            # Normal error handling - engine has already retried transient errors.
+            # Preserve state on disk so user can resume without corruption.
             self.status = self.STATUS_ERROR
             if self.download_engine:
                 try:
@@ -261,6 +221,7 @@ class DownloadItem(QObject):
             self.downloaded_bytes = self.download_engine.downloaded_bytes
             if hasattr(self.download_engine, 'output_file') and self.download_engine.output_file:
                 self.save_path = self.download_engine.output_file
+            self.emit_progress()
             if self.download_engine.start_download():
                 self.status = self.STATUS_DOWNLOADING
                 self.statusChanged.emit(self.status)
@@ -293,7 +254,9 @@ class DownloadItem(QObject):
         """Clean up and remove files."""
         if self.download_engine:
             self.download_engine.cleanup()
-            if hasattr(self.download_engine, 'temp_file') and self.download_engine.temp_file and os.path.exists(self.download_engine.temp_file):
+            if hasattr(self.download_engine, 'delete_temp_files'):
+                self.download_engine.delete_temp_files()
+            elif hasattr(self.download_engine, 'temp_file') and self.download_engine.temp_file and os.path.exists(self.download_engine.temp_file):
                 try:
                     os.remove(self.download_engine.temp_file)
                 except Exception:
