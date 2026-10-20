@@ -501,8 +501,8 @@ class MainWindow(QMainWindow):
         if row >= 0:
             dl = self.model.get_download(row)
             if dl and dl.status == DownloadItem.STATUS_ERROR:
-                # Reset status to paused so it can be retried
-                dl.status = DownloadItem.STATUS_PAUSED
+                # Reset status to pending so it can be retried
+                dl.status = DownloadItem.STATUS_PENDING
                 dl.statusChanged.emit(dl.status)
                 # Add to queue
                 if dl not in self.download_queue:
