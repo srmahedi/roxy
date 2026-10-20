@@ -149,7 +149,7 @@ class MainWindow(QMainWindow):
             return self.action_buttons[dl]
         
         btn = QPushButton()
-        btn.setFixedWidth(70)
+        btn.setFixedWidth(80)
         btn.setStyleSheet("""
             QPushButton {
                 background-color: #3c3c3c;
