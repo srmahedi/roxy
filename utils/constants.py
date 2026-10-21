@@ -2,6 +2,9 @@
 Constants for Roxy Download Manager
 """
 
+# Metadata header size (bytes) - reserved at beginning of temp file for embedded metadata
+METADATA_HEADER_SIZE = 4096
+
 # Dark Theme Stylesheet (global)
 DARK_QSS = """
 * {
@@ -127,7 +130,3 @@ SINGLE_INSTANCE_PORT = 12581
 APP_NAME = "Roxy Download Manager"
 APP_ORG_NAME = "Roxy"
 APP_ID = "Roxy.DownloadManager"
-
-# Download temp directory
-import os
-TEMP_DOWNLOAD_DIR = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'Roxy_Download_Manager')

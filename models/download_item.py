@@ -5,7 +5,6 @@ from typing import Optional, Dict, Any
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from utils.download_engine import DownloadEngine
-from utils.hls_engine import HLSEngine
 
 
 class DownloadItem(QObject):
@@ -50,29 +49,21 @@ class DownloadItem(QObject):
         self.user_agent = self.USER_AGENT
         self.post_data = ""
         self.document_url = ""
-        
+
         # Retry tracking
         self.retry_count = 0
         self.max_retries = 1
-        
-        # Initialize custom download engine based on URL type (HLS vs Direct File)
-        if self._is_hls_url(url):
-            self.download_engine = HLSEngine()
-        else:
-            self.download_engine = DownloadEngine()
-            if url and ('googleusercontent.com' in url.lower() or 'drive.google.com' in url.lower()):
-                self.download_engine.fallback_to_single_thread = True
+
+        # Temp file to restore (for persistence)
+        self._temp_file_to_restore = None
+
+        # Initialize download engine
+        self.download_engine = DownloadEngine()
+        if url and ('googleusercontent.com' in url.lower() or 'drive.google.com' in url.lower()):
+            self.download_engine.fallback_to_single_thread = True
 
         self.download_engine.set_event_callback(self._on_download_event)
         self.download_engine.set_progress_callback(self._on_download_progress)
-
-    @staticmethod
-    def _is_hls_url(url: str) -> bool:
-        """Check if URL points to an HLS m3u8 playlist"""
-        if not url:
-            return False
-        clean_url = url.split('?')[0].lower()
-        return clean_url.endswith('.m3u8') or '.m3u8' in url.lower()
 
     def _configure_engine(self):
         """Configure download engine with current parameters."""
@@ -211,6 +202,11 @@ class DownloadItem(QObject):
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
 
+        # Restore temp file from persistence if available
+        if self._temp_file_to_restore and os.path.exists(self._temp_file_to_restore):
+            self.download_engine.temp_file = self._temp_file_to_restore
+            print(f"Restoring temp file: {self._temp_file_to_restore}")
+
         # For resume: set downloaded_bytes in engine before initialization
         # if we have progress from a previous session
         if self.downloaded_bytes > 0:
@@ -297,10 +293,10 @@ class DownloadItem(QObject):
     def from_dict(cls, data: Dict[str, Any], parent=None) -> 'DownloadItem':
         """Create download item from dictionary."""
         status = data.get('status', cls.STATUS_PENDING)
-        
+
         if status == cls.STATUS_DOWNLOADING:
             status = cls.STATUS_PAUSED
-        
+
         item = cls(
             download_id=data.get('download_id'),
             url=data.get('url', ''),
@@ -311,11 +307,16 @@ class DownloadItem(QObject):
             total_bytes=data.get('total_bytes', -1),
             status=status
         )
-        
+
         item.referrer = data.get('referrer', '')
         item.cookies = data.get('cookies', '')
         item.user_agent = data.get('user_agent', cls.USER_AGENT)
         item.post_data = data.get('post_data', '')
         item.document_url = data.get('document_url', '')
-        
+
+        # If temp_file is provided, restore it to the download engine
+        temp_file = data.get('temp_file', '')
+        if temp_file and os.path.exists(temp_file):
+            item._temp_file_to_restore = temp_file
+
         return item

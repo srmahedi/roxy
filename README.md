@@ -14,12 +14,11 @@ A modern, feature-rich download manager built with Python and PyQt6. Roxy provid
 ## ✨ Key Features
 
 - ⚡ **Multi-Threaded Engine**: Custom FDM-style parallel chunk downloading with range request verification, mirror URL fallback support, and OkHttp integration via JPype for enhanced HTTP performance.
-- 🎬 **HLS / M3U8 Stream Downloader**: Automatic variant resolution (highest bitrate), multi-threaded segment fetching, AES-128 stream decryption, and seamless MP4 remuxing with ffmpeg support.
 - 🧩 **Chrome Extension Integration**: Intercepts Chrome downloads automatically and forwards URLs with full browser session metadata (cookies, referrer, user agent, post data).
 - 🔄 **Duplicate Download Handling**: FDM-style duplicate detection prompt offering **Overwrite**, **Download Again** with sequence numbering (`file (1).ext`), or **Skip**.
-- ⏯️ **Smart Pause & Resume**: Full resume capability for interrupted or paused downloads with `.temp` file state persistence.
+- ⏯️ **Smart Pause & Resume**: Full resume capability for interrupted or paused downloads with metadata embedded in `.temp` file headers.
 - 🚀 **Speed Control & Monitoring**: Per-download bandwidth speed limiting and live download rate calculation.
-- 📡 **Real-time Disk Tracking**: Live file system tracking using `watchdog` and download state persistence across application restarts.
+- 📡 **Real-time Disk Tracking**: Live file system tracking using `watchdog` and download state persistence across application restarts via temp file headers.
 - 🔒 **Single Instance Management**: Ensures only one Roxy instance runs at a time with socket-based inter-process communication.
 - 🌐 **roxy:// Protocol Support**: Custom URL protocol handler for seamless integration with system and browser workflows.
 
@@ -30,8 +29,7 @@ A modern, feature-rich download manager built with Python and PyQt6. Roxy provid
 ### Requirements
 - **Windows 10 / 11**
 - **Python 3.8+**
-- Python Dependencies: `PyQt6`, `watchdog`, `requests`, `urllib3`, `cryptography`, `JPype1`
-- Optional: `ffmpeg` (for HLS stream remuxing to MP4)
+- Python Dependencies: `PyQt6`, `watchdog`, `requests`, `urllib3`, `JPype1`
 
 ### Quick Setup
 
@@ -76,9 +74,8 @@ roxy/
 │   └── custom_table_view.py    # Custom styled table view component
 ├── utils/
 │   ├── download_engine.py      # Multi-threaded chunk download engine (OkHttp + requests)
-│   ├── hls_engine.py           # HLS M3U8 stream parser & segment stitcher
 │   ├── file_monitor.py         # Watchdog real-time file monitor
-│   ├── persistence.py          # JSON download state persistence
+│   ├── persistence.py          # Temp file header state loader
 │   ├── helpers.py              # Path, filename, and unique path helpers
 │   └── constants.py            # Application constants & dark theme stylesheet
 ├── server/
@@ -112,7 +109,7 @@ pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon
 
 ## ⚙️ Configuration & Ports
 
-- **State Storage**: `%LOCALAPPDATA%\Roxy_Download_Manager\downloads_state.json`
+- **State Storage**: Download state is embedded in `.temp` file headers (in download folder)
 - **Port 12579**: Roxy Launcher Server (receives URLs from Chrome extension)
 - **Port 12580**: Local REST API Server for Chrome extension communication
 - **Port 12581**: Single-instance mutex socket listener
@@ -128,13 +125,6 @@ pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon
 - **Chunk Management**: Adaptive section sizing (minimum 1MB per section)
 - **Resume Support**: Automatic detection and utilization of HTTP Range requests
 - **Special Handling**: Auto-detection and single-thread fallback for problematic servers (e.g., Google Drive)
-
-### HLS Stream Processing
-- **Master Playlist Support**: Automatic selection of highest bitrate variant
-- **Segment Downloads**: Multi-threaded segment fetching (up to 4 concurrent)
-- **Encryption**: AES-128 decryption with PKCS7 padding removal
-- **Remuxing**: Optional ffmpeg-based TS to MP4 conversion
-- **Fallback**: Direct TS file output if ffmpeg unavailable
 
 ### HTTP Features
 - **Retry Strategy**: Configurable retry with exponential backoff
