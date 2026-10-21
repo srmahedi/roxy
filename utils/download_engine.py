@@ -17,7 +17,10 @@ from dataclasses import dataclass, field
 from typing import Optional, Callable, List, Dict, Any
 from urllib.parse import urlparse
 
-from utils.constants import METADATA_HEADER_SIZE
+from utils.constants import TEMP_DOWNLOAD_DIR
+
+# Metadata header size (bytes) - reserved at beginning of temp file
+METADATA_HEADER_SIZE = 4096
 
 # Try to initialize OkHttp with JPype, fallback to requests if not available
 USE_OKHTTP = False
@@ -435,11 +438,9 @@ class DownloadEngine:
                                 if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
                                     dir_name = os.path.dirname(self.output_file) if self.output_file else ""
                                     self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
-                                    # Update temp_file path with new output_file (in download folder)
+                                    # Update temp_file path with new output_file
                                     file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
-                                    out_dir = os.path.dirname(self.output_file) or '.'
-                                    os.makedirs(out_dir, exist_ok=True)
-                                    self.temp_file = os.path.join(out_dir, f"{file_hash}.temp")
+                                    self.temp_file = os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.temp")
 
                     response.close()
                     
@@ -507,11 +508,9 @@ class DownloadEngine:
                                 if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
                                     dir_name = os.path.dirname(self.output_file) if self.output_file else ""
                                     self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
-                                    # Update temp_file path with new output_file (in download folder)
+                                    # Update temp_file path with new output_file
                                     file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
-                                    out_dir = os.path.dirname(self.output_file) or '.'
-                                    os.makedirs(out_dir, exist_ok=True)
-                                    self.temp_file = os.path.join(out_dir, f"{file_hash}.temp")
+                                    self.temp_file = os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.temp")
 
                     if hasattr(response, 'close'):
                         response.close()

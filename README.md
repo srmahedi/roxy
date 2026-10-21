@@ -16,9 +16,9 @@ A modern, feature-rich download manager built with Python and PyQt6. Roxy provid
 - ⚡ **Multi-Threaded Engine**: Custom FDM-style parallel chunk downloading with range request verification, mirror URL fallback support, and OkHttp integration via JPype for enhanced HTTP performance.
 - 🧩 **Chrome Extension Integration**: Intercepts Chrome downloads automatically and forwards URLs with full browser session metadata (cookies, referrer, user agent, post data).
 - 🔄 **Duplicate Download Handling**: FDM-style duplicate detection prompt offering **Overwrite**, **Download Again** with sequence numbering (`file (1).ext`), or **Skip**.
-- ⏯️ **Smart Pause & Resume**: Full resume capability for interrupted or paused downloads with metadata embedded in `.temp` file headers.
+- ⏯️ **Smart Pause & Resume**: Full resume capability for interrupted or paused downloads with `.temp` file state persistence.
 - 🚀 **Speed Control & Monitoring**: Per-download bandwidth speed limiting and live download rate calculation.
-- 📡 **Real-time Disk Tracking**: Live file system tracking using `watchdog` and download state persistence across application restarts via temp file headers.
+- 📡 **Real-time Disk Tracking**: Live file system tracking using `watchdog` and download state persistence across application restarts.
 - 🔒 **Single Instance Management**: Ensures only one Roxy instance runs at a time with socket-based inter-process communication.
 - 🌐 **roxy:// Protocol Support**: Custom URL protocol handler for seamless integration with system and browser workflows.
 
@@ -75,7 +75,7 @@ roxy/
 ├── utils/
 │   ├── download_engine.py      # Multi-threaded chunk download engine (OkHttp + requests)
 │   ├── file_monitor.py         # Watchdog real-time file monitor
-│   ├── persistence.py          # Temp file header state loader
+│   ├── persistence.py          # JSON download state persistence
 │   ├── helpers.py              # Path, filename, and unique path helpers
 │   └── constants.py            # Application constants & dark theme stylesheet
 ├── server/
@@ -109,7 +109,7 @@ pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon
 
 ## ⚙️ Configuration & Ports
 
-- **State Storage**: Download state is embedded in `.temp` file headers (in download folder)
+- **State Storage**: `%LOCALAPPDATA%\Roxy_Download_Manager\downloads_state.json`
 - **Port 12579**: Roxy Launcher Server (receives URLs from Chrome extension)
 - **Port 12580**: Local REST API Server for Chrome extension communication
 - **Port 12581**: Single-instance mutex socket listener

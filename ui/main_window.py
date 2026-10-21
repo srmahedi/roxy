@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from utils.constants import DARK_QSS, MAIN_API_PORT, APP_NAME
 from utils.helpers import force_window_to_foreground, extract_filename_from_url, get_unique_filepath
-from utils.persistence import PersistenceManager  # Now only for loading from temp files
+from utils.persistence import PersistenceManager
 from utils.file_monitor import DownloadFileMonitor
 from utils.download_engine import DownloadEngine, DownloadState
 from models import DownloadItem, DownloadTableModel, ProgressBarDelegate
@@ -664,37 +664,42 @@ class MainWindow(QMainWindow):
             print(f"Error saving downloads: {e}")
     
     def _load_saved_downloads(self):
-        """Load saved download state from temp file headers."""
+        """Load saved download state from disk."""
         try:
             saved_downloads = self.persistence.load_downloads()
             restored_count = 0
-
+            
             for download_data in saved_downloads:
-                # Only restore incomplete downloads (those with temp files)
-                temp_file = download_data.get('temp_file', '')
-                if not temp_file or not os.path.exists(temp_file):
-                    print(f"Skipping download - temp file not found: {temp_file}")
-                    continue
-
                 # Restore download from saved state
                 dl = DownloadItem.from_dict(download_data, parent=self)
-
-                # For incomplete downloads, the temp file metadata has the correct state
-                # The download engine will load the metadata when initialize_download is called
-                if os.path.exists(dl.save_path):
-                    # If final file exists, check its size
-                    try:
-                        actual_size = os.path.getsize(dl.save_path)
-                        dl.downloaded_bytes = actual_size
-                        if actual_size > 0:
-                            dl._resume = True
-                    except:
+                
+                # For completed downloads, only restore if file still exists
+                if dl.status == DownloadItem.STATUS_COMPLETED:
+                    if not os.path.exists(dl.save_path):
+                        # File was deleted, skip this download
+                        print(f"Skipping completed download - file not found: {dl.save_path}")
+                        continue
+                    # File exists, restore as completed
+                    dl.downloaded_bytes = os.path.getsize(dl.save_path)
+                    if dl.total_bytes == -1:
+                        dl.total_bytes = dl.downloaded_bytes
+                else:
+                    # For incomplete downloads, check if file still exists and has content
+                    if os.path.exists(dl.save_path):
+                        # Update downloaded_bytes to actual file size
+                        try:
+                            actual_size = os.path.getsize(dl.save_path)
+                            dl.downloaded_bytes = actual_size
+                            # Enable resume if file has content
+                            if actual_size > 0:
+                                dl._resume = True
+                        except:
+                            dl.downloaded_bytes = 0
+                            dl._resume = False
+                    else:
                         dl.downloaded_bytes = 0
                         dl._resume = False
-                else:
-                    dl.downloaded_bytes = 0
-                    dl._resume = False
-
+                
                 # Add to model
                 self.model.add_download(dl)
                 restored_count += 1
@@ -710,11 +715,11 @@ class MainWindow(QMainWindow):
                     # Change downloading status to paused on restore
                     dl.status = DownloadItem.STATUS_PAUSED
                     dl.statusChanged.emit(dl.status)
-
+                
             self._refresh_action_buttons()
             if restored_count > 0:
-                self.status_bar.showMessage(f"Restored {restored_count} incomplete downloads", 3000)
-
+                self.status_bar.showMessage(f"Restored {restored_count} downloads", 3000)
+                
         except Exception as e:
             print(f"Error loading saved downloads: {e}")
     
