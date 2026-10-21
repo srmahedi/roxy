@@ -143,12 +143,6 @@ class MainWindow(QMainWindow):
         # Load saved downloads on startup
         self._load_saved_downloads()
 
-        # Start periodic save timer for JSON persistence (every 5 seconds)
-        from PyQt6.QtCore import QTimer
-        self.save_timer = QTimer(self)
-        self.save_timer.timeout.connect(self._save_downloads)
-        self.save_timer.start(5000)  # Save every 5 seconds
-
     # ---- Action button management ----
     def _create_action_button_for_item(self, dl):
         if dl in self.action_buttons:
@@ -448,6 +442,7 @@ class MainWindow(QMainWindow):
         self._process_download_queue()
 
         self._update_queue_status()
+        self._save_downloads()  # Save on completion/error
 
     def _update_queue_status(self):
         """Update status bar with queue information."""
@@ -636,10 +631,6 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Paused all downloads", 3000)
 
     def closeEvent(self, event):
-        # Stop periodic save timer
-        if hasattr(self, 'save_timer'):
-            self.save_timer.stop()
-
         # Save download state before closing
         self._save_downloads()
 
