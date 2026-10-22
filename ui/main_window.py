@@ -159,15 +159,9 @@ class MainWindow(QMainWindow):
             on_file_moved=self._on_file_moved
         )
         self.file_monitor.start()
-        
+
         # Load saved downloads on startup
         self._load_saved_downloads()
-
-        # Start periodic save timer for JSON persistence (saves only if downloads are active)
-        from PyQt6.QtCore import QTimer
-        self.save_timer = QTimer(self)
-        self.save_timer.timeout.connect(self._periodic_save_check)
-        self.save_timer.start(10000)  # Check every 10 seconds, but only save if there are active downloads
 
     # ---- Action button management ----
     def _create_action_button_for_item(self, dl):
@@ -367,7 +361,7 @@ class MainWindow(QMainWindow):
             # Add to queue and start if under limit
             self.download_queue.append(dl)
             self._process_download_queue()
-            self._save_downloads()  # Queue state is saved via dl.to_dict()
+            self._save_downloads()  # Save immediately to prevent data loss
             self._update_queue_status()
 
     def add_download_from_api(self, url: str, filename: str = None, additional_info: dict = None):
@@ -447,7 +441,7 @@ class MainWindow(QMainWindow):
         self.download_queue.append(dl)
         self._process_download_queue()
 
-        self._save_downloads()  # Queue state is saved via dl.to_dict()
+        self._save_downloads()  # Save immediately to prevent data loss
 
         print(f"DEBUG: Download queued for URL: {url}")
         self._update_queue_status()
@@ -476,7 +470,7 @@ class MainWindow(QMainWindow):
         self._process_download_queue()
 
         self._update_queue_status()
-        self._save_downloads()  # Save on completion/error
+        self._save_downloads()  # Save immediately on completion/error
 
     def _update_queue_status(self):
         """Update status bar with queue information."""
@@ -530,7 +524,7 @@ class MainWindow(QMainWindow):
                 if dl in self.download_queue:
                     self.download_queue.remove(dl)
                 self.model.remove_download(row)
-                self._save_downloads()
+                self._save_downloads()  # Save immediately to reflect removal
                 self.status_bar.showMessage("Removed download", 3000)
 
     def retry_selected(self):
@@ -671,10 +665,6 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Settings saved", 3000)
 
     def closeEvent(self, event):
-        # Stop periodic save timer
-        if hasattr(self, 'save_timer'):
-            self.save_timer.stop()
-
         # Save download state before closing
         self._save_downloads()
 
@@ -708,15 +698,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error saving downloads: {e}")
 
-    def _periodic_save_check(self):
-        """Periodically save only if there are active/paused downloads (like IDM/FDM)."""
-        has_active_downloads = any(
-            dl.status in [DownloadItem.STATUS_DOWNLOADING, DownloadItem.STATUS_PAUSED, DownloadItem.STATUS_PENDING]
-            for dl in self.model.downloads
-        )
-        if has_active_downloads:
-            self._save_downloads()
-    
     def _load_saved_downloads(self):
         """Load saved download state from disk."""
         try:

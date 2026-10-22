@@ -273,7 +273,8 @@ class DownloadItem(QObject):
             'user_agent': self.user_agent,
             'post_data': self.post_data,
             'document_url': self.document_url,
-            'in_queue': self.status in [self.STATUS_PENDING, self.STATUS_PAUSED, self.STATUS_STOPPED]
+            'in_queue': self.status in [self.STATUS_PENDING, self.STATUS_PAUSED, self.STATUS_STOPPED],
+            'fallback_to_single_thread': self.download_engine.fallback_to_single_thread if self.download_engine else False
         }
     
     @classmethod
@@ -300,5 +301,13 @@ class DownloadItem(QObject):
         item.user_agent = data.get('user_agent', cls.USER_AGENT)
         item.post_data = data.get('post_data', '')
         item.document_url = data.get('document_url', '')
+        
+        # Initialize download engine with output file path so it can find .meta file on resume
+        if item.download_engine and item.save_path:
+            item.download_engine.output_file = item.save_path
+            item.download_engine.url = item.url
+            item.download_engine.downloaded_bytes = item.downloaded_bytes
+            item.download_engine.file_size = item.total_bytes
+            item.download_engine.fallback_to_single_thread = data.get('fallback_to_single_thread', False)
         
         return item

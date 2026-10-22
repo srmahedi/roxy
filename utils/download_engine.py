@@ -526,7 +526,8 @@ class DownloadEngine:
         out_dir = os.path.dirname(self.output_file) or '.'
         os.makedirs(out_dir, exist_ok=True)
 
-        # Reset state
+        # Reset state (but preserve downloaded_bytes if already set from restored state)
+        saved_downloaded_bytes = self.downloaded_bytes
         self.downloaded_bytes = 0
         self.sections.clear()
         self.mirrors.clear()
@@ -537,11 +538,15 @@ class DownloadEngine:
         self.query_file_info()
 
         # Check for existing metadata file (resume)
+        resume_loaded = False
         if os.path.exists(self._get_metadata_file_path()):
-            self._load_resume_state()
+            resume_loaded = self._load_resume_state()
 
-        # Create download sections (only if not restored from metadata)
-        self._create_sections()
+        # If no resume state was loaded, restore the saved downloaded_bytes from initialization
+        if not resume_loaded or not self.sections:
+            self.downloaded_bytes = saved_downloaded_bytes
+            # Create download sections (only if not restored from metadata)
+            self._create_sections()
 
         return True
     
@@ -1248,9 +1253,9 @@ class DownloadEngine:
             if self.file_size > 0:
                 progress = (self.downloaded_bytes / self.file_size) * 100
             
-            # Periodically save meta state (every 10 seconds, like IDM/FDM)
-            # This is a safety net - primary saves happen on section completion and state changes
-            if now - last_save_time >= 10.0:
+            # Save meta state every 2 seconds (balance between realtime and performance)
+            # Important events (section completion, errors) trigger immediate saves already
+            if now - last_save_time >= 2.0:
                 self._save_meta_state()
                 last_save_time = now
 
