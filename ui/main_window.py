@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 from utils.constants import DARK_QSS, MAIN_API_PORT, APP_NAME
 from utils.helpers import force_window_to_foreground, extract_filename_from_url, get_unique_filepath
 from utils.persistence import PersistenceManager
+from utils.settings import SettingsManager
 from utils.file_monitor import DownloadFileMonitor
 from utils.download_engine import DownloadEngine, DownloadState
 from models import DownloadItem, DownloadTableModel, ProgressBarDelegate
@@ -20,6 +21,7 @@ from ui.title_bar import TitleBar
 from ui.custom_table_view import CustomTableView
 from ui.add_url_dialog import AddUrlDialog
 from ui.duplicate_dialog import DuplicateDownloadDialog
+from ui.settings_dialog import SettingsDialog
 from server import RoxyAPIServer
 
 
@@ -90,10 +92,19 @@ class MainWindow(QMainWindow):
         self.stop_all_action.triggered.connect(self.stop_all)
         toolbar.addAction(self.stop_all_action)
 
+        toolbar.addSeparator()
+
+        self.settings_action = QAction("Settings", self)
+        self.settings_action.triggered.connect(self.show_settings)
+        toolbar.addAction(self.settings_action)
+
         self.action_buttons = {}
 
+        # Initialize settings manager (must be before download queue initialization)
+        self.settings = SettingsManager()
+
         # Download queue for handling multiple concurrent downloads
-        self.max_concurrent_downloads = 3  # Limit concurrent downloads
+        self.max_concurrent_downloads = self.settings.get_setting('max_concurrent_downloads', 3)
         self.download_queue = []  # Queue of pending downloads
         self.active_downloads = 0  # Count of currently active downloads
 
@@ -131,7 +142,7 @@ class MainWindow(QMainWindow):
 
         # Initialize persistence manager
         self.persistence = PersistenceManager()
-        
+
         # Initialize file monitor for tracking download files
         self.file_monitor = DownloadFileMonitor(
             on_file_deleted=self._on_file_deleted,
@@ -325,12 +336,13 @@ class MainWindow(QMainWindow):
         return None
 
     def add_download(self):
-        dialog = AddUrlDialog(self)
+        default_path = self.settings.get_setting('default_download_path')
+        dialog = AddUrlDialog(self, default_path)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             url = dialog.url
             save_path = dialog.selected_path
             speed_limit = dialog.speed_limit
-            
+
             resolved_path = self._check_and_resolve_duplicate(url, save_path)
             if not resolved_path:
                 self.status_bar.showMessage("Download cancelled", 3000)
@@ -363,9 +375,12 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-        downloads_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+        # Use default download path from settings, or fallback to OS Downloads folder
+        downloads_dir = self.settings.get_setting('default_download_path')
         if not downloads_dir or not os.path.isdir(downloads_dir):
-            downloads_dir = os.path.expanduser("~")
+            downloads_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+            if not downloads_dir or not os.path.isdir(downloads_dir):
+                downloads_dir = os.path.expanduser("~")
 
         # Pull cookies/referrer early so the filename probe can authenticate
         probe_cookies = additional_info.get('cookies', '') if additional_info else ''
@@ -643,6 +658,12 @@ class MainWindow(QMainWindow):
             if dl.status == DownloadItem.STATUS_DOWNLOADING:
                 dl.pause()
         self.status_bar.showMessage("Paused all downloads", 3000)
+
+    def show_settings(self):
+        """Show settings dialog."""
+        dialog = SettingsDialog(self, self.settings)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.status_bar.showMessage("Settings saved", 3000)
 
     def closeEvent(self, event):
         # Stop periodic save timer

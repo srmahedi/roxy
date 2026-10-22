@@ -12,7 +12,7 @@ from utils.helpers import extract_filename_from_url
 
 
 class AddUrlDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, default_path=None):
         super().__init__(parent)
         self.setWindowTitle("Add Download")
         self.setModal(True)
@@ -48,10 +48,13 @@ class AddUrlDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        # Default save location: OS Downloads folder
-        self.downloads_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
-        if not self.downloads_dir or not os.path.isdir(self.downloads_dir):
-            self.downloads_dir = os.path.expanduser("~")
+        # Default save location: use provided default_path or OS Downloads folder
+        if default_path and os.path.isdir(default_path):
+            self.downloads_dir = default_path
+        else:
+            self.downloads_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+            if not self.downloads_dir or not os.path.isdir(self.downloads_dir):
+                self.downloads_dir = os.path.expanduser("~")
         self.save_path_edit.setText(self.downloads_dir)
 
         self.selected_path = None
