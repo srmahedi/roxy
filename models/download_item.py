@@ -244,11 +244,6 @@ class DownloadItem(QObject):
             self.download_engine.cleanup()
             if hasattr(self.download_engine, 'delete_temp_files'):
                 self.download_engine.delete_temp_files()
-            elif hasattr(self.download_engine, 'temp_file') and self.download_engine.temp_file and os.path.exists(self.download_engine.temp_file):
-                try:
-                    os.remove(self.download_engine.temp_file)
-                except Exception:
-                    pass
 
         # Only delete the main file if download was NOT completed successfully
         # This prevents deleting successfully downloaded files
@@ -278,7 +273,6 @@ class DownloadItem(QObject):
             'user_agent': self.user_agent,
             'post_data': self.post_data,
             'document_url': self.document_url,
-            'temp_file': getattr(self.download_engine, 'temp_file', '') if self.download_engine else '',
             'in_queue': self.status in [self.STATUS_PENDING, self.STATUS_PAUSED, self.STATUS_STOPPED]
         }
     

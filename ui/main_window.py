@@ -584,8 +584,6 @@ class MainWindow(QMainWindow):
                                     os.remove(dl.save_path)
                                 if hasattr(dl.download_engine, 'delete_temp_files'):
                                     dl.download_engine.delete_temp_files()
-                                elif hasattr(dl.download_engine, 'temp_file') and dl.download_engine.temp_file and os.path.exists(dl.download_engine.temp_file):
-                                    os.remove(dl.download_engine.temp_file)
                             except Exception as e:
                                 print(f"Error deleting files for redownload: {e}")
                             # Reset state
@@ -627,8 +625,6 @@ class MainWindow(QMainWindow):
                         os.remove(dl.save_path)
                     if hasattr(dl.download_engine, 'delete_temp_files'):
                         dl.download_engine.delete_temp_files()
-                    elif hasattr(dl.download_engine, 'temp_file') and dl.download_engine.temp_file and os.path.exists(dl.download_engine.temp_file):
-                        os.remove(dl.download_engine.temp_file)
                 except Exception as e:
                     print(f"Error deleting files for redownload: {e}")
 
@@ -795,9 +791,8 @@ class MainWindow(QMainWindow):
                 if dl.status in (DownloadItem.STATUS_DOWNLOADING, DownloadItem.STATUS_PENDING):
                     print(f"Ignored file deletion event for active download {download_id}")
                     return
-                # Check if temp file or save path still exists (e.g. during atomic replace)
-                temp_file = getattr(dl.download_engine, 'temp_file', '') if dl.download_engine else ''
-                if os.path.exists(dl.save_path) or (temp_file and os.path.exists(temp_file)):
+                # Check if save path still exists
+                if os.path.exists(dl.save_path):
                     print(f"Ignored file deletion event - file exists: {dl.save_path}")
                     return
 

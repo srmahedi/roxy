@@ -19,9 +19,6 @@ from urllib.parse import urlparse
 
 from utils.constants import TEMP_DOWNLOAD_DIR
 
-# Metadata header size (bytes) - reserved at beginning of temp file
-METADATA_HEADER_SIZE = 4096
-
 # Try to initialize OkHttp with JPype, fallback to requests if not available
 USE_OKHTTP = False
 OkHttpClient = None
@@ -168,8 +165,6 @@ class DownloadEngine:
         
         # Resume support
         self.resume_supported: bool = False
-        self.temp_file: str = ""
-        self.has_metadata_header: bool = False  # Track if temp file has metadata header
         
         # HTTP client (OkHttp or requests)
         self.client = None
@@ -182,9 +177,18 @@ class DownloadEngine:
         self.max_retries: int = 3
         self.retry_delay: int = 5
 
+    def _get_metadata_file_path(self) -> str:
+        """Get the path to the .meta file for this download."""
+        if not self.output_file:
+            return ""
+        # Use hash of output file path to create unique .meta file name
+        import hashlib
+        file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
+        return os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.meta")
+
     def _get_metadata(self) -> Dict[str, Any]:
-        """Generate metadata dictionary for embedding in temp file header."""
-        if not self.temp_file or not self.sections:
+        """Generate metadata dictionary for saving to .meta file."""
+        if not self.output_file or not self.sections:
             return {}
 
         sections_data = [
@@ -209,8 +213,8 @@ class DownloadEngine:
         }
 
     def _save_meta_state(self):
-        """Save section progress and download metadata to temp file header."""
-        if not self.temp_file or not self.sections:
+        """Save section progress and download metadata to .meta file."""
+        if not self.output_file or not self.sections:
             return
 
         try:
@@ -219,40 +223,25 @@ class DownloadEngine:
                 if not meta_data:
                     return
 
-                # Serialize metadata to JSON
-                meta_json = json.dumps(meta_data, indent=2).encode('utf-8')
+                # Get .meta file path
+                meta_file = self._get_metadata_file_path()
+                if not meta_file:
+                    return
 
-                # Pad with null bytes to fill METADATA_HEADER_SIZE
-                if len(meta_json) > METADATA_HEADER_SIZE:
-                    print(f"WARNING: Metadata too large ({len(meta_json)} bytes), header size is {METADATA_HEADER_SIZE}")
-                    meta_json = meta_json[:METADATA_HEADER_SIZE]
-                else:
-                    meta_json = meta_json + b'\x00' * (METADATA_HEADER_SIZE - len(meta_json))
+                # Ensure metadata directory exists
+                meta_dir = os.path.dirname(meta_file)
+                if meta_dir and not os.path.exists(meta_dir):
+                    os.makedirs(meta_dir, exist_ok=True)
 
-                # Write to temp file header
-                with self.file_lock:
-                    if self.file_handle:
-                        # Save current position
-                        current_pos = self.file_handle.tell()
-                        # Write metadata at position 0
-                        self.file_handle.seek(0)
-                        self.file_handle.write(meta_json)
-                        self.file_handle.flush()
-                        # Restore position
-                        self.file_handle.seek(current_pos)
-                    else:
-                        # If file not open, open it temporarily
-                        with open(self.temp_file, 'r+b') as f:
-                            f.seek(0)
-                            f.write(meta_json)
-                            f.flush()
+                # Serialize metadata to JSON and save
+                with open(meta_file, 'w', encoding='utf-8') as f:
+                    json.dump(meta_data, f, indent=2)
 
-                self.has_metadata_header = True
         except Exception as e:
-            print(f"Failed to save metadata to temp file header: {e}")
+            print(f"Failed to save metadata to .meta file: {e}")
 
     def delete_temp_files(self):
-        """Safely close file handles and delete temp file."""
+        """Safely close file handles and delete output file and metadata file."""
         with self.file_lock:
             if self.file_handle:
                 try:
@@ -260,11 +249,18 @@ class DownloadEngine:
                 except Exception:
                     pass
                 self.file_handle = None
-        if self.temp_file and os.path.exists(self.temp_file):
+        if self.output_file and os.path.exists(self.output_file):
             try:
-                os.remove(self.temp_file)
+                os.remove(self.output_file)
             except Exception as e:
-                print(f"Could not remove temp file: {e}")
+                print(f"Could not remove output file: {e}")
+        # Delete metadata file
+        meta_file = self._get_metadata_file_path()
+        if meta_file and os.path.exists(meta_file):
+            try:
+                os.remove(meta_file)
+            except Exception as e:
+                print(f"Could not remove metadata file: {e}")
 
     # ---------------------------------------------------------------------------
     # Known CDN / vendor download portals that gate downloads behind a Referer.
@@ -438,9 +434,6 @@ class DownloadEngine:
                                 if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
                                     dir_name = os.path.dirname(self.output_file) if self.output_file else ""
                                     self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
-                                    # Update temp_file path with new output_file
-                                    file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
-                                    self.temp_file = os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.temp")
 
                     response.close()
                     
@@ -508,9 +501,6 @@ class DownloadEngine:
                                 if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
                                     dir_name = os.path.dirname(self.output_file) if self.output_file else ""
                                     self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
-                                    # Update temp_file path with new output_file
-                                    file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
-                                    self.temp_file = os.path.join(TEMP_DOWNLOAD_DIR, f"{file_hash}.temp")
 
                     if hasattr(response, 'close'):
                         response.close()
@@ -532,8 +522,7 @@ class DownloadEngine:
         self.url = url
         self.output_file = output_file or self._extract_filename(url)
 
-        # Create temp file as output_file + .temp extension (IDM/FDM style)
-        self.temp_file = self.output_file + ".temp"
+        # Create output directory if it doesn't exist
         out_dir = os.path.dirname(self.output_file) or '.'
         os.makedirs(out_dir, exist_ok=True)
 
@@ -547,8 +536,8 @@ class DownloadEngine:
         # Query file information (ignore return status, continue even if server blocks HEAD/GET)
         self.query_file_info()
 
-        # Check for existing temp file and metadata (resume)
-        if os.path.exists(self.temp_file):
+        # Check for existing metadata file (resume)
+        if os.path.exists(self._get_metadata_file_path()):
             self._load_resume_state()
 
         # Create download sections (only if not restored from metadata)
@@ -625,29 +614,25 @@ class DownloadEngine:
         self._save_meta_state()
 
     def _load_resume_state(self) -> bool:
-        """Load resume state from temp file header, verifying integrity against server info"""
-        if not os.path.exists(self.temp_file):
+        """Load resume state from .meta file, verifying integrity against server info"""
+        meta_file = self._get_metadata_file_path()
+        if not meta_file or not os.path.exists(meta_file):
+            self.downloaded_bytes = 0
+            self.sections.clear()
+            return False
+
+        # Check if output file exists
+        if not os.path.exists(self.output_file):
+            print(f"Output file does not exist: {self.output_file}. Cannot resume.")
+            self.delete_temp_files()
             self.downloaded_bytes = 0
             self.sections.clear()
             return False
 
         try:
-            # Read metadata from temp file header
-            with open(self.temp_file, 'rb') as f:
-                header = f.read(METADATA_HEADER_SIZE)
-
-            # Trim null bytes and decode
-            header = header.rstrip(b'\x00').decode('utf-8')
-
-            if not header or not header.startswith('{'):
-                # No valid metadata in header
-                print(f"WARNING: Temp file exists ({self.temp_file}) without valid metadata header. Starting fresh to prevent file corruption.")
-                self.delete_temp_files()
-                self.downloaded_bytes = 0
-                self.sections.clear()
-                return False
-
-            meta = json.loads(header)
+            # Read metadata from .meta file
+            with open(meta_file, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
 
             # Validate URL
             meta_url = meta.get('url', '')
@@ -727,10 +712,10 @@ class DownloadEngine:
         
         # Open output file for random-access binary read/write ('r+b' if exists, 'w+b' otherwise)
         try:
-            if os.path.exists(self.temp_file):
-                self.file_handle = open(self.temp_file, 'r+b')
+            if os.path.exists(self.output_file):
+                self.file_handle = open(self.output_file, 'r+b')
             else:
-                self.file_handle = open(self.temp_file, 'w+b')
+                self.file_handle = open(self.output_file, 'w+b')
         except Exception as e:
             self._emit_event('error', {'message': f'Failed to open output file: {str(e)}'})
             return False
@@ -892,8 +877,8 @@ class DownloadEngine:
                                 section.end = self.file_size - 1
                         with self.file_lock:
                             if self.file_handle and not self.file_handle.closed:
-                                self.file_handle.seek(METADATA_HEADER_SIZE)
-                                self.file_handle.truncate(METADATA_HEADER_SIZE)
+                                self.file_handle.seek(0)
+                                self.file_handle.truncate(0)
                         self.downloaded_bytes = 0
                         self._save_meta_state()
                 
@@ -942,10 +927,10 @@ class DownloadEngine:
                     if actual_chunk_size <= 0:
                         break
 
-                    # Write to file safely (offset by METADATA_HEADER_SIZE for header)
+                    # Write to file safely (no metadata header offset)
                     with self.file_lock:
                         if self.file_handle and not self.file_handle.closed:
-                            self.file_handle.seek(METADATA_HEADER_SIZE + section.current)
+                            self.file_handle.seek(section.current)
                             self.file_handle.write(python_chunk)
                         else:
                             break
@@ -1089,8 +1074,8 @@ class DownloadEngine:
                                 section.end = self.file_size - 1
                         with self.file_lock:
                             if self.file_handle and not self.file_handle.closed:
-                                self.file_handle.seek(METADATA_HEADER_SIZE)
-                                self.file_handle.truncate(METADATA_HEADER_SIZE)
+                                self.file_handle.seek(0)
+                                self.file_handle.truncate(0)
                         self.downloaded_bytes = 0
                         self._save_meta_state()
                 
@@ -1132,10 +1117,10 @@ class DownloadEngine:
                         if chunk_size <= 0:
                             break
 
-                        # Write to file safely (offset by METADATA_HEADER_SIZE for header)
+                        # Write to file safely (no metadata header offset)
                         with self.file_lock:
                             if self.file_handle and not self.file_handle.closed:
-                                self.file_handle.seek(METADATA_HEADER_SIZE + section.current)
+                                self.file_handle.seek(section.current)
                                 self.file_handle.write(chunk)
                             else:
                                 break
@@ -1303,7 +1288,7 @@ class DownloadEngine:
                 self._finalize_download()
     
     def _finalize_download(self):
-        """Finalize the download by renaming temp file to final file (IDM/FDM style)"""
+        """Finalize the download - file is already at final location"""
         try:
             self.stop_event.set()
 
@@ -1317,48 +1302,13 @@ class DownloadEngine:
                         print(f"WARNING: Error closing file handle: {e}")
                     self.file_handle = None
 
-            # Remove metadata header from temp file in-place (streaming, no full-file RAM load)
-            if os.path.exists(self.temp_file):
+            # Delete .meta file after successful completion
+            meta_file = self._get_metadata_file_path()
+            if meta_file and os.path.exists(meta_file):
                 try:
-                    # Strip the METADATA_HEADER_SIZE prefix in-place by copying content
-                    # in chunks — avoids loading the entire file into memory for large files.
-                    _COPY_CHUNK = 4 * 1024 * 1024  # 4 MB copy buffer
-                    temp_size = os.path.getsize(self.temp_file)
-                    actual_data_size = max(0, temp_size - METADATA_HEADER_SIZE)
-
-                    with open(self.temp_file, 'r+b') as f:
-                        read_pos = METADATA_HEADER_SIZE
-                        write_pos = 0
-                        bytes_remaining = actual_data_size
-
-                        while bytes_remaining > 0:
-                            to_read = min(_COPY_CHUNK, bytes_remaining)
-                            f.seek(read_pos)
-                            chunk = f.read(to_read)
-                            if not chunk:
-                                break
-                            f.seek(write_pos)
-                            f.write(chunk)
-                            read_pos += len(chunk)
-                            write_pos += len(chunk)
-                            bytes_remaining -= len(chunk)
-
-                        # Truncate file to the actual data size (drop the now-unused tail)
-                        f.truncate(actual_data_size)
-                        f.flush()
-
-                    # Rename temp file to final file (atomic operation, like IDM/FDM)
-                    if os.path.exists(self.output_file):
-                        os.remove(self.output_file)
-                    os.rename(self.temp_file, self.output_file)
-                    print(f"Successfully renamed temp file to: {self.output_file}")
+                    os.remove(meta_file)
                 except Exception as e:
-                    print(f"ERROR: Failed to finalize download: {e}")
-                    self._emit_event('error', {
-                        'message': f'Failed to finalize download but data preserved in temp file: {self.temp_file}'
-                    })
-                    self.state = DownloadState.ERROR
-                    return
+                    print(f"WARNING: Could not delete metadata file: {e}")
 
             if os.path.exists(self.output_file):
                 actual_size = os.path.getsize(self.output_file)
