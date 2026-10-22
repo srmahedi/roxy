@@ -103,6 +103,15 @@ class MainWindow(QMainWindow):
         # Initialize settings manager (must be before download queue initialization)
         self.settings = SettingsManager()
 
+        # Ensure default download path exists
+        default_path = self.settings.get_setting('default_download_path')
+        if default_path and not os.path.exists(default_path):
+            try:
+                os.makedirs(default_path, exist_ok=True)
+                print(f"Created default download directory: {default_path}")
+            except Exception as e:
+                print(f"Failed to create default download directory: {e}")
+
         # Download queue for handling multiple concurrent downloads
         self.max_concurrent_downloads = self.settings.get_setting('max_concurrent_downloads', 3)
         self.download_queue = []  # Queue of pending downloads
