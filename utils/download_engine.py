@@ -534,9 +534,6 @@ class DownloadEngine:
         self.current_mirror_index = 0
         self.stop_event.clear()
 
-        # Query file information (ignore return status, continue even if server blocks HEAD/GET)
-        self.query_file_info()
-
         # Check for existing metadata file (resume)
         resume_loaded = False
         if os.path.exists(self._get_metadata_file_path()):
@@ -548,7 +545,18 @@ class DownloadEngine:
             # Create download sections (only if not restored from metadata)
             self._create_sections()
 
+        # Query file info in background thread to avoid blocking UI
+        # File size will be discovered during download if query fails
+        threading.Thread(target=self._query_file_info_async, daemon=True).start()
+
         return True
+
+    def _query_file_info_async(self):
+        """Query file info in background thread to avoid blocking UI"""
+        try:
+            self.query_file_info()
+        except Exception as e:
+            print(f"Background file info query failed: {e}")
     
     def _extract_filename(self, url: str) -> str:
         """Extract filename from URL"""
@@ -1230,34 +1238,45 @@ class DownloadEngine:
         last_time = time.time()
         last_bytes = self.downloaded_bytes
         last_save_time = time.time()
-        
+        last_flush_time = time.time()
+
         while not self.stop_event.is_set() and self.state == DownloadState.DOWNLOADING:
             time.sleep(0.5)  # Update every 500ms
-            
+
             now = time.time()
             dt = now - last_time
             if dt <= 0:
                 dt = 0.5
-            
+
             current_bytes = self.downloaded_bytes
             bytes_delta = current_bytes - last_bytes
             if bytes_delta < 0:
                 bytes_delta = 0
-            
+
             current_speed = bytes_delta / dt
             last_time = now
             last_bytes = current_bytes
-            
+
             # Calculate progress
             progress = 0.0
             if self.file_size > 0:
                 progress = (self.downloaded_bytes / self.file_size) * 100
-            
+
             # Save meta state every 2 seconds (balance between realtime and performance)
             # Important events (section completion, errors) trigger immediate saves already
             if now - last_save_time >= 2.0:
                 self._save_meta_state()
                 last_save_time = now
+
+            # Flush file handle every 1 second to prevent corruption on interruption
+            if now - last_flush_time >= 1.0:
+                with self.file_lock:
+                    if self.file_handle and not self.file_handle.closed:
+                        try:
+                            self.file_handle.flush()
+                        except Exception:
+                            pass
+                last_flush_time = now
 
             # Emit progress callback
             if self.progress_callback:
@@ -1307,6 +1326,24 @@ class DownloadEngine:
                         print(f"WARNING: Error closing file handle: {e}")
                     self.file_handle = None
 
+            # Validate file size before marking as complete
+            if os.path.exists(self.output_file):
+                actual_size = os.path.getsize(self.output_file)
+                self.downloaded_bytes = actual_size
+
+                # If we know the expected file size, validate it
+                if self.file_size > 0 and actual_size != self.file_size:
+                    print(f"WARNING: File size mismatch - expected {self.file_size}, got {actual_size}")
+                    # Don't mark as complete if size doesn't match
+                    self.state = DownloadState.ERROR
+                    self._emit_event('error', {
+                        'message': f'File size mismatch after download (expected {self.file_size}, got {actual_size})'
+                    })
+                    return
+
+                if self.file_size <= 0:
+                    self.file_size = actual_size
+
             # Delete .meta file after successful completion
             meta_file = self._get_metadata_file_path()
             if meta_file and os.path.exists(meta_file):
@@ -1314,12 +1351,6 @@ class DownloadEngine:
                     os.remove(meta_file)
                 except Exception as e:
                     print(f"WARNING: Could not delete metadata file: {e}")
-
-            if os.path.exists(self.output_file):
-                actual_size = os.path.getsize(self.output_file)
-                self.downloaded_bytes = actual_size
-                if self.file_size <= 0:
-                    self.file_size = actual_size
 
             # Update state
             self.state = DownloadState.DONE
