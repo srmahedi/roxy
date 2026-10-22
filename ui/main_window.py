@@ -143,6 +143,12 @@ class MainWindow(QMainWindow):
         # Load saved downloads on startup
         self._load_saved_downloads()
 
+        # Start periodic save timer for JSON persistence (saves only if downloads are active)
+        from PyQt6.QtCore import QTimer
+        self.save_timer = QTimer(self)
+        self.save_timer.timeout.connect(self._periodic_save_check)
+        self.save_timer.start(10000)  # Check every 10 seconds, but only save if there are active downloads
+
     # ---- Action button management ----
     def _create_action_button_for_item(self, dl):
         if dl in self.action_buttons:
@@ -340,7 +346,7 @@ class MainWindow(QMainWindow):
             # Add to queue and start if under limit
             self.download_queue.append(dl)
             self._process_download_queue()
-            self._save_downloads()
+            self._save_downloads()  # Queue state is saved via dl.to_dict()
             self._update_queue_status()
 
     def add_download_from_api(self, url: str, filename: str = None, additional_info: dict = None):
@@ -417,7 +423,7 @@ class MainWindow(QMainWindow):
         self.download_queue.append(dl)
         self._process_download_queue()
 
-        self._save_downloads()
+        self._save_downloads()  # Queue state is saved via dl.to_dict()
 
         print(f"DEBUG: Download queued for URL: {url}")
         self._update_queue_status()
@@ -433,10 +439,14 @@ class MainWindow(QMainWindow):
                 self.active_downloads += 1
                 print(f"DEBUG: Started download from queue. Active: {self.active_downloads}, Queued: {len(self.download_queue)}")
                 self._update_queue_status()
+                self._save_downloads()  # Save queue state after dequeuing
 
     def _on_download_finished(self, dl):
         """Called when a download finishes (completed or error)."""
         self.active_downloads = max(0, self.active_downloads - 1)
+        # Remove from queue if present
+        if dl in self.download_queue:
+            self.download_queue.remove(dl)
         print(f"DEBUG: Download finished. Active: {self.active_downloads}, Queued: {len(self.download_queue)}")
         # Process next item in queue
         self._process_download_queue()
@@ -492,6 +502,9 @@ class MainWindow(QMainWindow):
                 except:
                     pass
                 self.file_monitor.unregister_download_file(dl.save_path)
+                # Remove from queue if present
+                if dl in self.download_queue:
+                    self.download_queue.remove(dl)
                 self.model.remove_download(row)
                 self._save_downloads()
                 self.status_bar.showMessage("Removed download", 3000)
@@ -509,7 +522,7 @@ class MainWindow(QMainWindow):
                 if dl not in self.download_queue:
                     self.download_queue.append(dl)
                 self._process_download_queue()
-                self._save_downloads()
+                self._save_downloads()  # Queue state saved via dl.to_dict()
                 self.status_bar.showMessage(f"Retrying: {os.path.basename(dl.save_path)}", 3000)
             elif dl and dl.status != DownloadItem.STATUS_ERROR:
                 self.status_bar.showMessage("Can only retry failed downloads", 3000)
@@ -622,6 +635,7 @@ class MainWindow(QMainWindow):
                 if dl not in self.download_queue:
                     self.download_queue.append(dl)
         self._process_download_queue()
+        self._save_downloads()  # Save queue state
         self.status_bar.showMessage("Starting all downloads", 3000)
 
     def stop_all(self):
@@ -631,6 +645,10 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Paused all downloads", 3000)
 
     def closeEvent(self, event):
+        # Stop periodic save timer
+        if hasattr(self, 'save_timer'):
+            self.save_timer.stop()
+
         # Save download state before closing
         self._save_downloads()
 
@@ -655,7 +673,7 @@ class MainWindow(QMainWindow):
                 # Save all downloads including completed ones
                 # Completed downloads will be restored if files still exist
                 downloads_data.append(dl.to_dict())
-            
+
             if downloads_data:
                 self.persistence.save_downloads(downloads_data)
             else:
@@ -663,17 +681,26 @@ class MainWindow(QMainWindow):
                 self.persistence.clear_state()
         except Exception as e:
             print(f"Error saving downloads: {e}")
+
+    def _periodic_save_check(self):
+        """Periodically save only if there are active/paused downloads (like IDM/FDM)."""
+        has_active_downloads = any(
+            dl.status in [DownloadItem.STATUS_DOWNLOADING, DownloadItem.STATUS_PAUSED, DownloadItem.STATUS_PENDING]
+            for dl in self.model.downloads
+        )
+        if has_active_downloads:
+            self._save_downloads()
     
     def _load_saved_downloads(self):
         """Load saved download state from disk."""
         try:
             saved_downloads = self.persistence.load_downloads()
             restored_count = 0
-            
+
             for download_data in saved_downloads:
                 # Restore download from saved state
                 dl = DownloadItem.from_dict(download_data, parent=self)
-                
+
                 # For completed downloads, only restore if file still exists
                 if dl.status == DownloadItem.STATUS_COMPLETED:
                     if not os.path.exists(dl.save_path):
@@ -700,7 +727,7 @@ class MainWindow(QMainWindow):
                     else:
                         dl.downloaded_bytes = 0
                         dl._resume = False
-                
+
                 # Add to model
                 self.model.add_download(dl)
                 restored_count += 1
@@ -716,11 +743,16 @@ class MainWindow(QMainWindow):
                     # Change downloading status to paused on restore
                     dl.status = DownloadItem.STATUS_PAUSED
                     dl.statusChanged.emit(dl.status)
-                
+
+                # Restore queue state - if it was queued/incomplete, add to queue
+                if download_data.get('in_queue', False):
+                    if dl not in self.download_queue:
+                        self.download_queue.append(dl)
+
             self._refresh_action_buttons()
             if restored_count > 0:
                 self.status_bar.showMessage(f"Restored {restored_count} downloads", 3000)
-                
+
         except Exception as e:
             print(f"Error loading saved downloads: {e}")
     

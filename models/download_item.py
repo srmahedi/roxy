@@ -278,7 +278,8 @@ class DownloadItem(QObject):
             'user_agent': self.user_agent,
             'post_data': self.post_data,
             'document_url': self.document_url,
-            'temp_file': getattr(self.download_engine, 'temp_file', '') if self.download_engine else ''
+            'temp_file': getattr(self.download_engine, 'temp_file', '') if self.download_engine else '',
+            'in_queue': self.status in [self.STATUS_PENDING, self.STATUS_PAUSED, self.STATUS_STOPPED]
         }
     
     @classmethod

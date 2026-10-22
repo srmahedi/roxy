@@ -1264,8 +1264,9 @@ class DownloadEngine:
             if self.file_size > 0:
                 progress = (self.downloaded_bytes / self.file_size) * 100
             
-            # Periodically save meta state (every 2 seconds)
-            if now - last_save_time >= 2.0:
+            # Periodically save meta state (every 10 seconds, like IDM/FDM)
+            # This is a safety net - primary saves happen on section completion and state changes
+            if now - last_save_time >= 10.0:
                 self._save_meta_state()
                 last_save_time = now
 
