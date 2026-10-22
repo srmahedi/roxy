@@ -531,13 +531,12 @@ class DownloadEngine:
         """Initialize download with URL and output file"""
         self.url = url
         self.output_file = output_file or self._extract_filename(url)
-        
-        # Create temp file path in download folder using hash of output path
-        file_hash = hashlib.md5(self.output_file.encode('utf-8')).hexdigest()
+
+        # Create temp file as output_file + .temp extension (IDM/FDM style)
+        self.temp_file = self.output_file + ".temp"
         out_dir = os.path.dirname(self.output_file) or '.'
         os.makedirs(out_dir, exist_ok=True)
-        self.temp_file = os.path.join(out_dir, f"{file_hash}.temp")
-        
+
         # Reset state
         self.downloaded_bytes = 0
         self.sections.clear()
@@ -547,14 +546,14 @@ class DownloadEngine:
 
         # Query file information (ignore return status, continue even if server blocks HEAD/GET)
         self.query_file_info()
-        
+
         # Check for existing temp file and metadata (resume)
         if os.path.exists(self.temp_file):
             self._load_resume_state()
-        
+
         # Create download sections (only if not restored from metadata)
         self._create_sections()
-        
+
         return True
     
     def _extract_filename(self, url: str) -> str:
@@ -1304,7 +1303,7 @@ class DownloadEngine:
                 self._finalize_download()
     
     def _finalize_download(self):
-        """Finalize the download by moving temp file to final location"""
+        """Finalize the download by renaming temp file to final file (IDM/FDM style)"""
         try:
             self.stop_event.set()
 
@@ -1318,48 +1317,25 @@ class DownloadEngine:
                         print(f"WARNING: Error closing file handle: {e}")
                     self.file_handle = None
 
-            # Copy temp file to final location, skipping metadata header
+            # Remove metadata header from temp file in-place
             if os.path.exists(self.temp_file):
-                out_dir = os.path.dirname(self.output_file)
-                if out_dir:
-                    os.makedirs(out_dir, exist_ok=True)
+                try:
+                    # Read temp file, skip header, write back to temp file
+                    with open(self.temp_file, 'rb') as f:
+                        header = f.read(METADATA_HEADER_SIZE)
+                        data = f.read()
 
-                replaced = False
-                last_err = None
-                for attempt in range(5):
-                    try:
-                        # If target file exists, remove it first to avoid permission issues
-                        if os.path.exists(self.output_file):
-                            try:
-                                os.remove(self.output_file)
-                                print(f"Removed existing target file: {self.output_file}")
-                            except Exception as e:
-                                print(f"WARNING: Could not remove target file: {e}")
+                    # Write back without header
+                    with open(self.temp_file, 'wb') as f:
+                        f.write(data)
 
-                        # Copy temp file to final location, skipping METADATA_HEADER_SIZE
-                        with open(self.temp_file, 'rb') as src:
-                            src.seek(METADATA_HEADER_SIZE)  # Skip metadata header
-                            with open(self.output_file, 'wb') as dst:
-                                # Copy in chunks for efficiency
-                                chunk_size = 1024 * 1024  # 1MB chunks
-                                while True:
-                                    chunk = src.read(chunk_size)
-                                    if not chunk:
-                                        break
-                                    dst.write(chunk)
-
-                        # Remove temp file after successful copy
-                        os.remove(self.temp_file)
-                        replaced = True
-                        print(f"Successfully copied download from temp (skipping header) to: {self.output_file}")
-                        break
-                    except Exception as err:
-                        last_err = err
-                        print(f"Finalize attempt {attempt + 1} failed: {err}")
-                        time.sleep(0.2)
-
-                if not replaced and os.path.exists(self.temp_file):
-                    print(f"ERROR: All finalize attempts failed. Last error: {last_err}")
+                    # Rename temp file to final file (atomic operation, like IDM/FDM)
+                    if os.path.exists(self.output_file):
+                        os.remove(self.output_file)
+                    os.rename(self.temp_file, self.output_file)
+                    print(f"Successfully renamed temp file to: {self.output_file}")
+                except Exception as e:
+                    print(f"ERROR: Failed to finalize download: {e}")
                     self._emit_event('error', {
                         'message': f'Failed to finalize download but data preserved in temp file: {self.temp_file}'
                     })
