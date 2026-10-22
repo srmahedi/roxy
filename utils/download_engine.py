@@ -1317,17 +1317,35 @@ class DownloadEngine:
                         print(f"WARNING: Error closing file handle: {e}")
                     self.file_handle = None
 
-            # Remove metadata header from temp file in-place
+            # Remove metadata header from temp file in-place (streaming, no full-file RAM load)
             if os.path.exists(self.temp_file):
                 try:
-                    # Read temp file, skip header, write back to temp file
-                    with open(self.temp_file, 'rb') as f:
-                        header = f.read(METADATA_HEADER_SIZE)
-                        data = f.read()
+                    # Strip the METADATA_HEADER_SIZE prefix in-place by copying content
+                    # in chunks — avoids loading the entire file into memory for large files.
+                    _COPY_CHUNK = 4 * 1024 * 1024  # 4 MB copy buffer
+                    temp_size = os.path.getsize(self.temp_file)
+                    actual_data_size = max(0, temp_size - METADATA_HEADER_SIZE)
 
-                    # Write back without header
-                    with open(self.temp_file, 'wb') as f:
-                        f.write(data)
+                    with open(self.temp_file, 'r+b') as f:
+                        read_pos = METADATA_HEADER_SIZE
+                        write_pos = 0
+                        bytes_remaining = actual_data_size
+
+                        while bytes_remaining > 0:
+                            to_read = min(_COPY_CHUNK, bytes_remaining)
+                            f.seek(read_pos)
+                            chunk = f.read(to_read)
+                            if not chunk:
+                                break
+                            f.seek(write_pos)
+                            f.write(chunk)
+                            read_pos += len(chunk)
+                            write_pos += len(chunk)
+                            bytes_remaining -= len(chunk)
+
+                        # Truncate file to the actual data size (drop the now-unused tail)
+                        f.truncate(actual_data_size)
+                        f.flush()
 
                     # Rename temp file to final file (atomic operation, like IDM/FDM)
                     if os.path.exists(self.output_file):
