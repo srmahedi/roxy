@@ -1238,7 +1238,6 @@ class DownloadEngine:
         last_time = time.time()
         last_bytes = self.downloaded_bytes
         last_flush_time = time.time()
-        last_meta_save_time = time.time()
 
         while not self.stop_event.is_set() and self.state == DownloadState.DOWNLOADING:
             time.sleep(0.5)  # Update every 500ms
@@ -1271,12 +1270,6 @@ class DownloadEngine:
                         except Exception:
                             pass
                 last_flush_time = now
-
-            # Save metadata every 10 seconds to track progress for resume
-            # This ensures we can resume after power failure even if section isn't complete
-            if now - last_meta_save_time >= 10.0:
-                self._save_meta_state()
-                last_meta_save_time = now
 
             # Emit progress callback
             if self.progress_callback:

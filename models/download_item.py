@@ -309,16 +309,5 @@ class DownloadItem(QObject):
             item.download_engine.downloaded_bytes = item.downloaded_bytes
             item.download_engine.file_size = item.total_bytes
             item.download_engine.fallback_to_single_thread = data.get('fallback_to_single_thread', False)
-
-            # Load detailed resume state from .meta file if it exists
-            # This restores section-level progress for proper resumption
-            try:
-                if item.download_engine._load_resume_state():
-                    # If .meta file was loaded successfully, update item's bytes from engine
-                    item.downloaded_bytes = item.download_engine.downloaded_bytes
-                    item.total_bytes = item.download_engine.file_size
-                    print(f"Loaded resume state from .meta file for {item.save_path}: {item.downloaded_bytes}/{item.total_bytes}")
-            except Exception as e:
-                print(f"Could not load resume state from .meta file: {e}")
-
+        
         return item

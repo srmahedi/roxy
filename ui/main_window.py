@@ -725,10 +725,15 @@ class MainWindow(QMainWindow):
                         try:
                             actual_size = os.path.getsize(dl.save_path)
                             dl.downloaded_bytes = actual_size
+                            # Enable resume if file has content
+                            if actual_size > 0:
+                                dl._resume = True
                         except:
                             dl.downloaded_bytes = 0
+                            dl._resume = False
                     else:
                         dl.downloaded_bytes = 0
+                        dl._resume = False
 
                 # Add to model
                 self.model.add_download(dl)
