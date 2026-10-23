@@ -1237,8 +1237,8 @@ class DownloadEngine:
         """Monitor download progress and emit callbacks"""
         last_time = time.time()
         last_bytes = self.downloaded_bytes
-        last_save_time = time.time()
         last_flush_time = time.time()
+        last_meta_save_time = time.time()
 
         while not self.stop_event.is_set() and self.state == DownloadState.DOWNLOADING:
             time.sleep(0.5)  # Update every 500ms
@@ -1262,12 +1262,6 @@ class DownloadEngine:
             if self.file_size > 0:
                 progress = (self.downloaded_bytes / self.file_size) * 100
 
-            # Save meta state every 2 seconds (balance between realtime and performance)
-            # Important events (section completion, errors) trigger immediate saves already
-            if now - last_save_time >= 2.0:
-                self._save_meta_state()
-                last_save_time = now
-
             # Flush file handle every 1 second to prevent corruption on interruption
             if now - last_flush_time >= 1.0:
                 with self.file_lock:
@@ -1277,6 +1271,12 @@ class DownloadEngine:
                         except Exception:
                             pass
                 last_flush_time = now
+
+            # Save metadata every 10 seconds to track progress for resume
+            # This ensures we can resume after power failure even if section isn't complete
+            if now - last_meta_save_time >= 10.0:
+                self._save_meta_state()
+                last_meta_save_time = now
 
             # Emit progress callback
             if self.progress_callback:
