@@ -682,8 +682,6 @@ class DownloadEngine:
         self._check_completion()
 
     def _download_section_requests(self, section: DownloadSection, url: str):
-    
-    def _download_section_requests(self, section: DownloadSection, url: str):
         """Download a specific section using requests"""
         retry_count = 0
         while not self.stop_event.is_set() and section.state != SectionState.DONE:
