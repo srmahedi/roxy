@@ -11,20 +11,20 @@ A modern, feature-rich download manager built with Python and PyQt6. Roxy provid
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-- ⚡ **Multi-Threaded Engine**: Custom FDM-style parallel chunk downloading with range request verification and mirror URL fallback support.
-- 🧩 **Chrome Extension Integration**: Intercepts Chrome downloads automatically and forwards URLs with full browser session metadata (cookies, referrer, user agent, post data).
-- 🔄 **Duplicate Download Handling**: FDM-style duplicate detection prompt offering **Overwrite**, **Download Again** with sequence numbering (`file (1).ext`), or **Skip**.
-- ⏯️ **Smart Pause & Resume**: Full resume capability for interrupted or paused downloads with `.temp` file state persistence.
-- 🚀 **Speed Control & Monitoring**: Per-download bandwidth speed limiting and live download rate calculation.
-- 📡 **Real-time Disk Tracking**: Live file system tracking using `watchdog` and download state persistence across application restarts.
-- 🔒 **Single Instance Management**: Ensures only one Roxy instance runs at a time with socket-based inter-process communication.
-- 🌐 **roxy:// Protocol Support**: Custom URL protocol handler for seamless integration with system and browser workflows.
+- **Multi-Threaded Engine**: Custom FDM-style parallel chunk downloading with range request verification and mirror URL fallback support.
+- **Chrome Extension Integration**: Intercepts Chrome downloads automatically and forwards URLs with full browser session metadata (cookies, referrer, user agent, post data).
+- **Duplicate Download Handling**: FDM-style duplicate detection prompt offering **Overwrite**, **Download Again** with sequence numbering (`file (1).ext`), or **Skip**.
+- **Smart Pause & Resume**: Full resume capability for interrupted or paused downloads with `.temp` file state persistence.
+- **Speed Control & Monitoring**: Per-download bandwidth speed limiting and live download rate calculation.
+- **Real-time Disk Tracking**: Live file system tracking using `watchdog` and download state persistence across application restarts.
+- **Single Instance Management**: Ensures only one Roxy instance runs at a time with socket-based inter-process communication.
+- **roxy:// Protocol Support**: Custom URL protocol handler for seamless integration with system and browser workflows.
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Requirements
 - **Windows 10 / 11**
@@ -47,7 +47,7 @@ python main.py
 
 ---
 
-## 🌐 Chrome Extension Setup
+## Chrome Extension Setup
 
 1. Open Google Chrome and navigate to `chrome://extensions/`.
 2. Enable **Developer mode** in the top-right toggle.
@@ -57,7 +57,7 @@ python main.py
 
 ---
 
-## 🏗️ Project Architecture
+## Project Architecture
 
 ```
 roxy/
@@ -86,7 +86,7 @@ roxy/
 
 ---
 
-## 🔧 Building Standalone Executable
+## Building Standalone Executable
 
 ### PyInstaller Build
 ```bash
@@ -102,7 +102,7 @@ pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon
 
 ---
 
-## ⚙️ Configuration & Ports
+## Configuration & Ports
 
 - **State Storage**: `%LOCALAPPDATA%\Roxy_Download_Manager\downloads_state.json`
 - **Port 12579**: Roxy Launcher Server (receives URLs from Chrome extension)
@@ -111,7 +111,7 @@ pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon
 
 ---
 
-## � Technical Details
+## Technical Details
 
 ### Download Engine Architecture
 - **HTTP Backend**: Python `requests` library with retry logic
@@ -128,6 +128,6 @@ pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon
 
 ---
 
-## �📄 License
+## License
 
 Distributed under the **MIT License**. See `LICENSE` for details.
