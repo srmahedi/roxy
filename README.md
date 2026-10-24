@@ -13,7 +13,7 @@ A modern, feature-rich download manager built with Python and PyQt6. Roxy provid
 
 ## ✨ Key Features
 
-- ⚡ **Multi-Threaded Engine**: Custom FDM-style parallel chunk downloading with range request verification, mirror URL fallback support, and OkHttp integration via JPype for enhanced HTTP performance.
+- ⚡ **Multi-Threaded Engine**: Custom FDM-style parallel chunk downloading with range request verification and mirror URL fallback support.
 - 🧩 **Chrome Extension Integration**: Intercepts Chrome downloads automatically and forwards URLs with full browser session metadata (cookies, referrer, user agent, post data).
 - 🔄 **Duplicate Download Handling**: FDM-style duplicate detection prompt offering **Overwrite**, **Download Again** with sequence numbering (`file (1).ext`), or **Skip**.
 - ⏯️ **Smart Pause & Resume**: Full resume capability for interrupted or paused downloads with `.temp` file state persistence.
@@ -29,7 +29,7 @@ A modern, feature-rich download manager built with Python and PyQt6. Roxy provid
 ### Requirements
 - **Windows 10 / 11**
 - **Python 3.8+**
-- Python Dependencies: `PyQt6`, `watchdog`, `requests`, `urllib3`, `JPype1`
+- Python Dependencies: `PyQt6`, `watchdog`, `requests`, `urllib3`
 
 ### Quick Setup
 
@@ -73,7 +73,7 @@ roxy/
 │   ├── duplicate_dialog.py     # Duplicate download choice modal (Overwrite/Rename/Skip)
 │   └── custom_table_view.py    # Custom styled table view component
 ├── utils/
-│   ├── download_engine.py      # Multi-threaded chunk download engine (OkHttp + requests)
+│   ├── download_engine.py      # Multi-threaded chunk download engine (requests)
 │   ├── file_monitor.py         # Watchdog real-time file monitor
 │   ├── persistence.py          # JSON download state persistence
 │   ├── helpers.py              # Path, filename, and unique path helpers
@@ -81,11 +81,6 @@ roxy/
 ├── server/
 │   ├── api_server.py           # Local HTTP REST API server (Port 12580)
 │   └── single_instance.py      # Single instance socket lock listener (Port 12581)
-├── okhttp/                     # OkHttp JAR files for Java HTTP client integration
-│   ├── okhttp-jvm-5.5.0.jar
-│   ├── okio-jvm-3.18.1.jar
-│   ├── kotlin-stdlib-2.1.21.jar
-│   └── annotations-13.0.jar
 └── Roxy-ext/                   # Chrome extension source files
 ```
 
@@ -119,8 +114,7 @@ pyinstaller --clean --noconfirm --windowed --onefile --name roxy-launcher --icon
 ## � Technical Details
 
 ### Download Engine Architecture
-- **Primary Backend**: OkHttp via JPype (Java HTTP client) for optimal performance
-- **Fallback Backend**: Python `requests` library with retry logic
+- **HTTP Backend**: Python `requests` library with retry logic
 - **Multi-threading**: Up to 4 concurrent download threads per file
 - **Chunk Management**: Adaptive section sizing (minimum 1MB per section)
 - **Resume Support**: Automatic detection and utilization of HTTP Range requests

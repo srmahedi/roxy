@@ -1,7 +1,7 @@
 """
 Custom Download Engine based on FDM Architecture
 Implements multi-threaded downloading with resume support, speed limiting, and mirror URLs.
-Uses OkHttp via JPype for HTTP operations with fallback to requests.
+Uses requests library for HTTP operations.
 """
 
 import os
@@ -10,7 +10,6 @@ import threading
 import time
 import queue
 import hashlib
-import glob
 import json
 from enum import Enum
 from dataclasses import dataclass, field
@@ -19,40 +18,7 @@ from urllib.parse import urlparse
 
 from utils.constants import TEMP_DOWNLOAD_DIR
 
-# Try to initialize OkHttp with JPype, fallback to requests if not available
-USE_OKHTTP = False
-OkHttpClient = None
-Request = None
-TimeUnit = None
-
-try:
-    import jpype
-    
-    # OkHttp JVM initialization
-    BASE_DIR = (
-        os.path.dirname(sys.executable)
-        if getattr(sys, "frozen", False)
-        else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    
-    JAR_DIR = os.path.join(BASE_DIR, "okhttp")
-    JARS = glob.glob(os.path.join(JAR_DIR, "*.jar"))
-    
-    if JARS and not jpype.isJVMStarted():
-        try:
-            jpype.startJVM(classpath=JARS)
-            # Import OkHttp classes
-            OkHttpClient = jpype.JClass("okhttp3.OkHttpClient")
-            Request = jpype.JClass("okhttp3.Request")
-            TimeUnit = jpype.JClass("java.util.concurrent.TimeUnit")
-            USE_OKHTTP = True
-            print("OkHttp initialized successfully")
-        except Exception as e:
-            print(f"Failed to initialize OkHttp: {e}, falling back to requests")
-except Exception as e:
-    print(f"JPype not available: {e}, using requests library")
-
-# Import requests as fallback
+# Import requests for HTTP operations
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -166,9 +132,8 @@ class DownloadEngine:
         # Resume support
         self.resume_supported: bool = False
         
-        # HTTP client (OkHttp or requests)
-        self.client = None
-        self.session = None  # requests fallback
+        # HTTP client (requests)
+        self.session = None
         self.timeout: int = 30
         self.user_agent: str = "Roxy-Download-Engine/1.0"
         self.headers: Dict[str, str] = {}
@@ -324,43 +289,32 @@ class DownloadEngine:
             return ''
         
     def create_client(self):
-        """Create HTTP client (OkHttp or requests) with configuration"""
-        if USE_OKHTTP:
-            builder = OkHttpClient().newBuilder()
+        """Create HTTP client (requests) with configuration"""
+        self.session = requests.Session()
 
-            # Set timeout
-            builder.connectTimeout(self.timeout, TimeUnit.SECONDS)
-            builder.readTimeout(self.timeout, TimeUnit.SECONDS)
-            builder.writeTimeout(self.timeout, TimeUnit.SECONDS)
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=self.max_retries,
+            backoff_factor=1,
+            status_forcelist=[408, 429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS"]
+        )
 
-            self.client = builder.build()
-        else:
-            # Fallback to requests
-            self.session = requests.Session()
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
 
-            # Configure retry strategy
-            retry_strategy = Retry(
-                total=self.max_retries,
-                backoff_factor=1,
-                status_forcelist=[408, 429, 500, 502, 503, 504],
-                allowed_methods=["HEAD", "GET", "OPTIONS"]
-            )
-
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-            self.session.mount("http://", adapter)
-            self.session.mount("https://", adapter)
-
-            # Disable automatic gzip decompression to avoid issues with range requests
-            self.session.headers.update({
-                'User-Agent': self.user_agent,
-                'Accept-Encoding': 'identity',  # Disable compression
-                **self.headers
-            })
-            # Inject auto-referer if no explicit referer is set
-            if 'Referer' not in self.headers and 'referer' not in self.headers:
-                auto_ref = self._auto_referer()
-                if auto_ref:
-                    self.session.headers['Referer'] = auto_ref
+        # Disable automatic gzip decompression to avoid issues with range requests
+        self.session.headers.update({
+            'User-Agent': self.user_agent,
+            'Accept-Encoding': 'identity',  # Disable compression
+            **self.headers
+        })
+        # Inject auto-referer if no explicit referer is set
+        if 'Referer' not in self.headers and 'referer' not in self.headers:
+            auto_ref = self._auto_referer()
+            if auto_ref:
+                self.session.headers['Referer'] = auto_ref
 
     def _refresh_session_headers(self):
         """Refresh the user-agent and extra headers on an already-open session."""
@@ -379,140 +333,73 @@ class DownloadEngine:
     def query_file_info(self) -> bool:
         """Query file size and check resume support with HEAD and GET fallback"""
         try:
-            if USE_OKHTTP:
-                if not self.client:
-                    self.create_client()
-                
-                response = None
-                try:
-                    # First try HEAD request
-                    request_builder = Request.Builder().url(self.url).head()
-                    request = request_builder.build()
-                    response = self.client.newCall(request).execute()
-                    
-                    if response.code() not in (200, 206):
-                        response.close()
-                        response = None
-                except Exception:
+            if not self.session:
+                self.create_client()
+
+            response = None
+            try:
+                # First try HEAD request
+                response = self.session.head(
+                    self.url,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                    headers={'Accept-Encoding': 'identity'}
+                )
+                if response.status_code not in (200, 206):
                     response = None
-
-                # Fallback to GET request if HEAD failed
-                if response is None:
-                    try:
-                        request_builder = Request.Builder().url(self.url).get()
-                        request = request_builder.build()
-                        response = self.client.newCall(request).execute()
-                    except Exception:
-                        response = None
-
-                if response is not None:
-                    # Get file size
-                    content_length = response.header('content-length')
-                    if content_length and content_length.isdigit():
-                        self.file_size = int(content_length)
-                    
-                    # Check resume support
-                    accept_ranges = response.header('accept-ranges')
-                    if accept_ranges:
-                        self.resume_supported = 'bytes' in accept_ranges.lower()
-                    content_range = response.header('content-range')
-                    if content_range:
-                        self.resume_supported = True
-                    
-                    # Get suggested filename from Content-Disposition
-                    content_disposition = response.header('content-disposition')
-                    if content_disposition and 'filename' in content_disposition.lower():
-                        import re
-                        from utils.helpers import sanitize_filename
-                        fn_match = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)', content_disposition, re.IGNORECASE)
-                        if fn_match:
-                            suggested = sanitize_filename(fn_match.group(1).strip('"\''))
-                            if suggested:
-                                cur_base = os.path.basename(self.output_file) if self.output_file else ""
-                                cur_ext = os.path.splitext(cur_base)[1]
-                                
-                                if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
-                                    dir_name = os.path.dirname(self.output_file) if self.output_file else ""
-                                    self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
-
-                    response.close()
-                    
-                    self._emit_event('file_info_queried', {
-                        'file_size': self.file_size,
-                        'resume_supported': self.resume_supported
-                    })
-                    
-                    return True
-                return False
-            else:
-                # Fallback to requests
-                if not self.session:
-                    self.create_client()
-                
+            except Exception:
                 response = None
+
+            # Fallback to stream GET request if HEAD failed
+            if response is None:
                 try:
-                    # First try HEAD request
-                    response = self.session.head(
+                    response = self.session.get(
                         self.url,
+                        stream=True,
                         timeout=self.timeout,
                         allow_redirects=True,
                         headers={'Accept-Encoding': 'identity'}
                     )
-                    if response.status_code not in (200, 206):
-                        response = None
                 except Exception:
                     response = None
 
-                # Fallback to stream GET request if HEAD failed
-                if response is None:
-                    try:
-                        response = self.session.get(
-                            self.url,
-                            stream=True,
-                            timeout=self.timeout,
-                            allow_redirects=True,
-                            headers={'Accept-Encoding': 'identity'}
-                        )
-                    except Exception:
-                        response = None
+            if response is not None:
+                # Get file size
+                content_length = response.headers.get('content-length')
+                if content_length and content_length.isdigit():
+                    self.file_size = int(content_length)
 
-                if response is not None:
-                    # Get file size
-                    content_length = response.headers.get('content-length')
-                    if content_length and content_length.isdigit():
-                        self.file_size = int(content_length)
-                    
-                    # Check resume support
-                    accept_ranges = response.headers.get('accept-ranges', '').lower()
-                    self.resume_supported = 'bytes' in accept_ranges or 'content-range' in response.headers
-                    
-                    # Get suggested filename from Content-Disposition
-                    content_disposition = response.headers.get('content-disposition', '')
-                    if content_disposition and 'filename' in content_disposition.lower():
-                        import re
-                        from utils.helpers import sanitize_filename
-                        fn_match = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)', content_disposition, re.IGNORECASE)
-                        if fn_match:
-                            suggested = sanitize_filename(fn_match.group(1).strip('"\''))
-                            if suggested:
-                                cur_base = os.path.basename(self.output_file) if self.output_file else ""
-                                cur_ext = os.path.splitext(cur_base)[1]
-                                
-                                if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
-                                    dir_name = os.path.dirname(self.output_file) if self.output_file else ""
-                                    self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
+                # Check resume support
+                accept_ranges = response.headers.get('accept-ranges', '').lower()
+                self.resume_supported = 'bytes' in accept_ranges or 'content-range' in response.headers
 
-                    if hasattr(response, 'close'):
-                        response.close()
-                    
-                    self._emit_event('file_info_queried', {
-                        'file_size': self.file_size,
-                        'resume_supported': self.resume_supported
-                    })
-                    
-                    return True
-                return False
-            
+                # Get suggested filename from Content-Disposition
+                content_disposition = response.headers.get('content-disposition', '')
+                if content_disposition and 'filename' in content_disposition.lower():
+                    import re
+                    from utils.helpers import sanitize_filename
+                    fn_match = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)', content_disposition, re.IGNORECASE)
+                    if fn_match:
+                        suggested = sanitize_filename(fn_match.group(1).strip('"\''))
+                        if suggested:
+                            cur_base = os.path.basename(self.output_file) if self.output_file else ""
+                            cur_ext = os.path.splitext(cur_base)[1]
+
+                            if not self.output_file or not cur_ext or cur_base.lower() in ('download', 'file', 'index', 'view'):
+                                dir_name = os.path.dirname(self.output_file) if self.output_file else ""
+                                self.output_file = os.path.join(dir_name, suggested) if dir_name else suggested
+
+                if hasattr(response, 'close'):
+                    response.close()
+
+                self._emit_event('file_info_queried', {
+                    'file_size': self.file_size,
+                    'resume_supported': self.resume_supported
+                })
+
+                return True
+            return False
+
         except Exception as e:
             self._emit_event('error', {'message': f'Failed to query file info: {str(e)}'})
             return False
@@ -715,14 +602,10 @@ class DownloadEngine:
         """Start the download process"""
         if self.state == DownloadState.DOWNLOADING:
             return False
-        
-        if USE_OKHTTP:
-            if not self.client:
-                self.create_client()
-        else:
-            if not self.session:
-                self.create_client()
-        
+
+        if not self.session:
+            self.create_client()
+
         # Open output file for random-access binary read/write ('r+b' if exists, 'w+b' otherwise)
         try:
             if os.path.exists(self.output_file):
@@ -786,231 +669,22 @@ class DownloadEngine:
                 break
 
             url = self._get_current_url()
-            if USE_OKHTTP:
-                self._download_section_okhttp(section_to_download, url)
-            else:
-                self._download_section_requests(section_to_download, url)
+            self._download_section_requests(section_to_download, url)
 
             self._check_completion()
 
     def _download_section(self, section: DownloadSection):
         """Download a specific section"""
         url = self._get_current_url()
-        
-        if USE_OKHTTP:
-            self._download_section_okhttp(section, url)
-        else:
-            self._download_section_requests(section, url)
-        
+        self._download_section_requests(section, url)
+
         # Check if all sections are done
         self._check_completion()
-    
-    def _download_section_okhttp(self, section: DownloadSection, url: str):
-        """Download a specific section using OkHttp"""
-        retry_count = 0
-        while not self.stop_event.is_set() and section.state != SectionState.DONE:
-            try:
-                # If section is already completed, mark DONE and exit
-                if section.end > 0 and section.current >= section.end + 1:
-                    section.state = SectionState.DONE
-                    return
 
-                # Prepare request builder
-                request_builder = Request.Builder().url(url)
-                
-                # Add custom headers
-                for key, value in self.headers.items():
-                    request_builder.addHeader(key, value)
-                
-                # Use Range header if resume is supported and not starting from 0 to end of file
-                if self.resume_supported and (section.start > 0 or section.current > 0 or section.end > 0):
-                    if section.end > 0:
-                        request_builder.addHeader("Range", f'bytes={section.current}-{section.end}')
-                    elif section.current > 0:
-                        request_builder.addHeader("Range", f'bytes={section.current}-')
-                
-                request = request_builder.build()
-                response = self.client.newCall(request).execute()
-                
-                if not response.isSuccessful():
-                    raise Exception(f"HTTP {response.code()}: {response.message()}")
-
-                # Safety check: Detect if server returned an HTML error/webpage instead of expected binary file
-                content_type = response.header('content-type')
-                if content_type:
-                    content_type = content_type.lower()
-                target_ext = os.path.splitext(self.output_file)[1].lower() if self.output_file else ""
-                if content_type and 'text/html' in content_type and target_ext not in ('.html', '.htm'):
-                    body = response.body()
-                    try:
-                        sample_bytes = body.byteStream().read(4096)
-                        sample = bytes(sample_bytes).decode('utf-8', errors='ignore')
-                    except Exception:
-                        sample = ""
-                    err_msg = "Server returned an HTML page instead of the requested file"
-                    if "404" in sample or "not found" in sample.lower():
-                        err_msg = "File not found (404)."
-
-                    with self.lock:
-                        section.state = SectionState.ERROR
-                        section.last_error = err_msg
-                        self.state = DownloadState.ERROR
-                        self.stop_event.set()
-                    try:
-                        if self.file_handle:
-                            with self.file_lock:
-                                self.file_handle.close()
-                                self.file_handle = None
-                    except Exception:
-                        pass
-                    body.close()
-                    response.close()
-                    self._emit_event('error', {'message': err_msg})
-                    return
-
-                # Check if range request was sent but server returned 200 OK (ignored Range)
-                range_header = request.header("Range")
-                if range_header and response.code() == 200:
-                    body = response.body()
-                    if section.section_id != 0:
-                        section.state = SectionState.STOPPED
-                        body.close()
-                        response.close()
-                        return
-                    else:
-                        with self.lock:
-                            self.resume_supported = False
-                            self.fallback_to_single_thread = True
-                            for s in self.sections:
-                                if s.section_id != 0:
-                                    s.state = SectionState.STOPPED
-                            section.start = 0
-                            section.current = 0
-                            if section.end > 0 and self.file_size > 0:
-                                section.end = self.file_size - 1
-                        with self.file_lock:
-                            if self.file_handle and not self.file_handle.closed:
-                                self.file_handle.seek(0)
-                                self.file_handle.truncate(0)
-                        self.downloaded_bytes = 0
-                        self._save_meta_state()
-                
-                # Update section end and file size if unknown
-                content_length = response.header('content-length')
-                if content_length and content_length.isdigit():
-                    cl = int(content_length)
-                    if section.end <= 0:
-                        section.end = section.current + cl - 1
-                    with self.lock:
-                        if self.file_size <= 0:
-                            self.file_size = section.current + cl
-
-                content_range = response.header('content-range')
-                if content_range:
-                    import re
-                    cr_match = re.search(r'bytes\s+\d+-\d+/(\d+)', content_range, re.IGNORECASE)
-                    if cr_match:
-                        with self.lock:
-                            self.file_size = int(cr_match.group(1))
-                
-                # Download data
-                body = response.body()
-                input_stream = body.byteStream()
-                chunk_size = 8192
-                
-                while not self.stop_event.is_set():
-                    chunk = input_stream.read(chunk_size)
-                    if chunk is None or len(chunk) == 0:
-                        break
-                    
-                    # Convert Java byte array to Python bytes
-                    python_chunk = bytes(chunk)
-                    
-                    # Apply speed limit
-                    if self.speed_limit > 0:
-                        self._apply_speed_limit(len(python_chunk))
-                    
-                    actual_chunk_size = len(python_chunk)
-
-                    # Prevent writing past section end if section end is defined
-                    if section.end > 0 and section.current + actual_chunk_size > section.end + 1:
-                        actual_chunk_size = max(0, section.end + 1 - section.current)
-                        python_chunk = python_chunk[:actual_chunk_size]
-
-                    if actual_chunk_size <= 0:
-                        break
-
-                    # Write to file safely (no metadata header offset)
-                    with self.file_lock:
-                        if self.file_handle and not self.file_handle.closed:
-                            self.file_handle.seek(section.current)
-                            self.file_handle.write(python_chunk)
-                        else:
-                            break
-                    
-                    # Update progress
-                    with self.lock:
-                        section.current += actual_chunk_size
-                        section.speed = actual_chunk_size
-                        if self.sections:
-                            calculated_bytes = sum(max(0, s.current - s.start) for s in self.sections)
-                            if self.file_size > 0:
-                                self.downloaded_bytes = min(self.file_size, calculated_bytes)
-                            else:
-                                self.downloaded_bytes = calculated_bytes
-
-                    retry_count = 0
-
-                    if section.end > 0 and section.current >= section.end + 1:
-                        break
-                
-                body.close()
-                response.close()
-                
-                # Section completed
-                if not self.stop_event.is_set():
-                    if (section.end > 0 and section.current >= section.end + 1) or (section.end <= 0 and response.code() == 200):
-                        section.state = SectionState.DONE
-                        self._save_meta_state()
-                        self._emit_event('section_done', {
-                            'section_id': section.section_id,
-                            'bytes_downloaded': section.current - section.start
-                        })
-                        return
-                
-            except Exception as e:
-                if self.stop_event.is_set():
-                    section.state = SectionState.STOPPED
-                    return
-                else:
-                    section.last_error = str(e)
-                    print(f"DEBUG: OkHttp Section {section.section_id} error: {e}")
-
-                    # Try next mirror if available
-                    if self._try_next_mirror():
-                        continue
-
-                    # Transient retry
-                    retry_count += 1
-                    if retry_count <= self.max_retries and not self.stop_event.is_set():
-                        print(f"Retrying section {section.section_id} ({retry_count}/{self.max_retries}) in {self.retry_delay}s...")
-                        time.sleep(self.retry_delay)
-                        continue
-
-                    section.state = SectionState.ERROR
-                    self._save_meta_state()
-                    with self.lock:
-                        self.state = DownloadState.ERROR
-                        self.stop_event.set()
-                    self._emit_event('section_error', {
-                        'section_id': section.section_id,
-                        'error': str(e)
-                    })
-                    self._emit_event('error', {'message': f'Network error: {str(e)}'})
-                    return
+    def _download_section_requests(self, section: DownloadSection, url: str):
     
     def _download_section_requests(self, section: DownloadSection, url: str):
-        """Download a specific section using requests (fallback)"""
+        """Download a specific section using requests"""
         retry_count = 0
         while not self.stop_event.is_set() and section.state != SectionState.DONE:
             try:
@@ -1455,15 +1129,8 @@ class DownloadEngine:
     def cleanup(self):
         """Clean up resources"""
         self.stop_download()
-        
-        if USE_OKHTTP and self.client:
-            try:
-                self.client.dispatcher().executorService().shutdown()
-                self.client.connectionPool().evictAll()
-            except Exception:
-                pass
-            self.client = None
-        elif not USE_OKHTTP and self.session:
+
+        if self.session:
             try:
                 self.session.close()
             except Exception:
